@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # CORREZIONE: Importiamo direttamente DB_PATH dal nostro config
 from core.config import DB_PATH
@@ -143,6 +143,21 @@ class Database:
         rows = self._query(" ".join(sql), params)
         return [dict(r) for r in rows]
 
+# ... (tutte le funzioni esistenti come list_documents, timesheet_query, etc.)
+
+    # --- NUOVA FUNZIONE PER CANCELLARE TUTTI I DATI ---
+    def delete_all_data(self):
+        """
+        CANCELLA TUTTI I DATI dalle tabelle principali. Usare con cautela.
+        """
+        with self._connect() as conn:
+            # Grazie a "ON DELETE CASCADE", cancellare i documenti
+            # dovrebbe cancellare a catena anche le estrazioni e le righe timesheet.
+            # Eseguiamo comunque comandi espliciti per massima sicurezza.
+            conn.execute("DELETE FROM timesheet_rows;")
+            conn.execute("DELETE FROM extractions;")
+            conn.execute("DELETE FROM documents;")
+            conn.commit()
 
 # Creiamo un'istanza unica del gestore del DB, pronta per essere importata
 db_manager = Database(db_path=DB_PATH)
