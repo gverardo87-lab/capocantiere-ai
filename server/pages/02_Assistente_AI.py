@@ -9,8 +9,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from core.chat_logic import get_ai_response
 
-st.set_page_config(page_title="Assistente AI", page_icon="💬")
-
 st.title("💬 Assistente di Cantiere AI")
 st.markdown("Fai una domanda in linguaggio naturale sui dati caricati nel sistema.")
 

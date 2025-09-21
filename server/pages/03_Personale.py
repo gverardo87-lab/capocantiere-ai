@@ -10,8 +10,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from core.db import db_manager
 
-st.set_page_config(page_title="Gestione Personale", page_icon="👷‍♂️")
-
 st.title("👷‍♂️ Gestione Personale")
 st.markdown("Aggiungi e visualizza i lavoratori presenti in anagrafica.")
 
