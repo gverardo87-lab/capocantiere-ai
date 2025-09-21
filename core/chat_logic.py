@@ -1,74 +1,104 @@
 from __future__ import annotations
-import ollama
+import json
+import sys
+import os
+# Import custom per aggiungere la root del progetto al path, come da tua correzione
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import pandas as pd
+from ollama import Client
+
 from core.config import OLLAMA_MODEL
 from core.db import db_manager
-import pandas as pd
 
 
 def get_ai_response(chat_history: list[dict]) -> str:
     """
-    Prende la cronologia della chat, interroga il DB per dati rilevanti
-    e genera una risposta con Ollama.
+    Logica avanzata per la chat:
+    1. L'AI interpreta la domanda dell'utente per capire quali filtri applicare.
+    2. Esegue una query mirata al database con quei filtri.
+    3. L'AI genera una risposta in linguaggio naturale basata sui risultati della query.
     """
-
-    # Prendi l'ultima domanda dell'utente
+    print("--- Avvio logica chat AVANZATA ---")
+    client = Client()
     user_query = chat_history[-1]["content"]
 
-    # --- Step 1: Cerca dati rilevanti nel database ---
-    # Questa è una logica SEMPLICE. In futuro potremmo renderla più intelligente
-    # per capire meglio cosa l'utente sta chiedendo e interrogare il db in modo più mirato.
-    # Per ora, prendiamo un riassunto generale delle ore.
+    # --- FASE 1: RICONOSCIMENTO DELL'INTENTO E DEI PARAMETRI ---
+    # Chiediamo all'AI di trasformare la domanda in un JSON che possiamo usare per la query
+    
+    # Prendiamo la lista degli operai e delle commesse esistenti dal DB per aiutare l'AI
+    distincts = db_manager.timesheet_distincts()
+    operai_disponibili = distincts.get('operaio', [])
+    commesse_disponibili = distincts.get('commessa', [])
 
+    intent_prompt = f"""
+    Analizza la domanda dell'utente e trasformala in un JSON per interrogare un database.
+    I campi possibili per il JSON sono: "operai" (una lista di nomi), "commesse" (una lista di nomi).
+    Se l'utente non specifica un filtro, ometti la chiave dal JSON.
+
+    Lista di operai conosciuti: {operai_disponibili}
+    Lista di commesse conosciute: {commesse_disponibili}
+
+    Esempi:
+    - Domanda: "ore totali di Rossi Luca" -> {{"operai": ["Rossi Luca"]}}
+    - Domanda: "quanto si è lavorato sulla commessa 24-015?" -> {{"commesse": ["24-015"]}}
+    - Domanda: "ore di Bianchi Marco sulla commessa 24-015" -> {{"operai": ["Bianchi Marco"], "commesse": ["24-015"]}}
+    - Domanda: "riepilogo generale" -> {{}}
+
+    Domanda dell'utente da analizzare: "{user_query}"
+    """
+    
     try:
-        # Eseguiamo una query generica per avere un contesto sui dati disponibili
-        all_timesheet_data = db_manager.timesheet_query()
-        df = pd.DataFrame(all_timesheet_data)
-
-        context_data = "Nessun dato sui rapportini presente nel database."
-        if not df.empty:
-            total_ore = df['ore'].sum()
-            operai = df['operaio'].unique()
-            commesse = df['commessa'].unique()
-
-            context_data = f"""
-            Ecco un riepilogo dei dati attualmente presenti nel database:
-            - Totale Ore Registrate: {total_ore:.2f}
-            - Operai Coinvolti: {', '.join(operai)}
-            - Commesse Attive: {', '.join(commesse)}
-
-            Usa questi dati per rispondere alla domanda dell'utente. Se la domanda è specifica 
-            (es. "ore di un operaio"), rispondi basandoti su questi dati aggregati 
-            o suggerisci all'utente di usare i filtri per un'analisi dettagliata.
-            """
+        response = client.chat(
+            model=OLLAMA_MODEL,
+            messages=[{'role': 'user', 'content': intent_prompt}],
+            format="json",
+            options={'temperature': 0.0}
+        )
+        query_params_str = response['message']['content']
+        print(f"Parametri JSON estratti dall'AI: {query_params_str}")
+        query_params = json.loads(query_params_str)
     except Exception as e:
-        context_data = f"Errore durante la connessione al database: {e}"
+        print(f"ERRORE nella fase di intent recognition: {e}")
+        return "Mi dispiace, non sono riuscito a capire la tua domanda. Prova a riformularla."
 
-    # --- Step 2: Prepara il prompt per Ollama ---
-    prompt = f"""
-    Sei "CapoCantiere AI", un assistente virtuale per la gestione di dati di cantiere.
-    Rispondi in modo conciso e professionale.
+    # --- FASE 2: ESECUZIONE DELLA QUERY SUL DATABASE ---
+    try:
+        # Usiamo i parametri estratti dall'AI per chiamare la nostra funzione esistente
+        results = db_manager.timesheet_query(
+            operai=query_params.get("operai"),
+            commesse=query_params.get("commesse")
+        )
+        df = pd.DataFrame(results) if results else pd.DataFrame()
+        
+        context_data = "Non ho trovato dati corrispondenti ai filtri richiesti."
+        if not df.empty:
+            context_data = df.to_string() # Diamo all'AI i dati grezzi in formato testo
 
-    CONTESTO DAI DATI DEL DATABASE:
+    except Exception as e:
+        print(f"ERRORE nella fase di query al DB: {e}")
+        return "Ho avuto un problema a interrogare il database."
+
+    # --- FASE 3: GENERAZIONE DELLA RISPOSTA FINALE ---
+    response_prompt = f"""
+    Sei "CapoCantiere AI", un assistente virtuale.
+    Rispondi alla domanda originale dell'utente in modo chiaro e conciso, usando i dati che ti fornisco.
+
+    Dati estratti dal database:
+    ---
     {context_data}
+    ---
 
-    DOMANDA DELL'UTENTE: "{user_query}"
+    Domanda originale dell'utente: "{user_query}"
 
-    Rispondi alla domanda usando il contesto fornito.
+    Formula la tua risposta finale.
     """
 
-    # Aggiungiamo il prompt "di sistema" alla cronologia per dare istruzioni al modello
-    messages_for_ollama = [
-        {"role": "system", "content": prompt}
-    ]
-
-    # --- Step 3: Chiama Ollama per la risposta ---
     try:
-        response = ollama.chat(
+        final_response = client.chat(
             model=OLLAMA_MODEL,
-            messages=messages_for_ollama,
-            stream=False  # Per ora teniamolo semplice senza streaming
+            messages=[{'role': 'user', 'content': response_prompt}]
         )
-        return response['message']['content']
+        return final_response['message']['content']
     except Exception as e:
-        print(f"ERRORE: Impossibile contattare Ollama: {e}")
-        return "Scusa, non riesco a contattare il motore AI al momento. Assicurati che Ollama sia in esecuzione."
+        print(f"ERRORE nella fase di generazione risposta: {e}")
+        return "Ho trovato i dati ma ho avuto un problema a formulare la risposta."

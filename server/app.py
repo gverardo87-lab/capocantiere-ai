@@ -6,71 +6,103 @@ import pandas as pd
 import streamlit as st
 import sys
 
-# Import custom
+# Import custom per aggiungere la root del progetto al path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from core.db import db_manager
-from tools.extractors import *
+from tools.extractors import (
+    read_text_and_kind,
+    file_sha256,
+    parse_timesheet_csv,
+    extract_fields_with_ai
+)
 from core.chat_logic import get_ai_response
 
-st.set_page_config(page_title="CapoCantiere AI", layout="wide")
+# Configurazione della pagina Streamlit
+st.set_page_config(
+    page_title="🏗️ CapoCantiere AI",
+    page_icon="🏗️",
+    layout="wide",
+)
 
+# --- NUOVA FUNZIONE DI CALLBACK PER LA GESTIONE DELL'UPLOAD ---
+def process_uploaded_file():
+    """
+    Questa funzione viene chiamata automaticamente da Streamlit ogni volta
+    che un nuovo file viene caricato nel file_uploader.
+    """
+    # Prendiamo il file dallo stato della sessione, usando la chiave del widget
+    uploaded_file = st.session_state.get("file_uploader")
+    if uploaded_file is None:
+        return
 
-# --- FUNZIONE HELPER PER RICARICARE I DATI FILTRATI ---
-# L'abbiamo messa in una funzione per poterla richiamare facilmente
+    file_bytes = uploaded_file.getvalue()
+    filename = uploaded_file.name
+    sha256_hash = file_sha256(file_bytes)
+
+    with st.spinner(f"Analisi di '{filename}'..."):
+        text, kind = read_text_and_kind(filename, file_bytes)
+        document_id = db_manager.upsert_document(
+            kind=kind.replace("_CSV", ""), filename=filename, content_type=uploaded_file.type,
+            size_bytes=uploaded_file.size, sha256=sha256_hash
+        )
+
+        fields = []
+        if kind == "RAPPORTO_CSV":
+            try:
+                rows, summary = parse_timesheet_csv(file_bytes)
+                fields.extend(summary)
+                db_manager.replace_timesheet_rows(document_id, rows)
+                st.success(f"Rapportino '{filename}' importato!")
+                # Aggiorniamo i dati per la tabella principale
+                refresh_filtered_data()
+            except Exception as e:
+                st.error(f"Errore nel CSV: {e}")
+        else:
+            st.info(f"Documento classificato come '{kind}'. Avvio estrazione con AI...")
+            ai_fields = extract_fields_with_ai(text, kind)
+            if ai_fields:
+                fields.extend(ai_fields)
+                st.success(f"Estrazione AI completata! Trovati {len(ai_fields)} campi.")
+            else:
+                st.warning("L'estrazione AI non ha prodotto risultati validi.")
+
+        if fields:
+            db_manager.bulk_upsert_extractions(
+                document_id, [(f.name, f.value, f.confidence, f.method) for f in fields]
+            )
+
+# --- FUNZIONE HELPER PER RICARICARE I DATI ---
 def refresh_filtered_data():
     """Esegue una query con tutti i dati e aggiorna lo stato della sessione."""
     results = db_manager.timesheet_query()
     st.session_state['filtered_timesheet'] = pd.DataFrame(results) if results else pd.DataFrame()
 
 
-# --- SIDEBAR PER FILTRI E CONTROLLO ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.title("🏗️ CapoCantiere AI")
 
-    # Sezione di Upload (ora più pulita)
     with st.expander("➕ Carica Documenti", expanded=True):
-        uploaded_file = st.file_uploader("Seleziona un documento", type=["pdf", "docx", "xlsx", "csv"],
-                                         label_visibility="collapsed")
-        if uploaded_file is not None:
-            file_bytes = uploaded_file.getvalue()
-            filename = uploaded_file.name
-            sha256_hash = file_sha256(file_bytes)
-            with st.spinner(f"Analisi di '{filename}'..."):
-                text, kind = read_text_and_kind(filename, file_bytes)
-                document_id = db_manager.upsert_document(kind=kind.replace("_CSV", ""), filename=filename,
-                                                         content_type=uploaded_file.type, size_bytes=uploaded_file.size,
-                                                         sha256=sha256_hash)
-                fields = []
-                if kind == "RAPPORTO_CSV":
-                    try:
-                        rows, summary = parse_timesheet_csv(file_bytes)
-                        fields.extend(summary)
-                        db_manager.replace_timesheet_rows(document_id, rows)
-                        st.success(f"Rapportino '{filename}' importato!")
-                        # CORREZIONE: Aggiorniamo i dati della tabella dopo l'upload
-                        refresh_filtered_data()
-                    except Exception as e:
-                        st.error(f"Errore nel CSV: {e}")
-                else:
-                    fields.extend(extract_fields_from_text(text))
-                    st.success(f"Documento '{filename}' analizzato!")
-
-                if fields: db_manager.bulk_upsert_extractions(document_id,
-                                                              [(f.name, f.value, f.confidence, f.method) for f in
-                                                               fields])
-            # Rimosso st.rerun() che causava problemi. Streamlit gestisce l'aggiornamento.
-
+        # ORA USIAMO IL PARAMETRO on_change PER GESTIRE L'UPLOAD
+        st.file_uploader(
+            "Seleziona un documento",
+            type=["pdf", "docx", "xlsx", "csv"],
+            label_visibility="collapsed",
+            key="file_uploader",
+            on_change=process_uploaded_file
+        )
+    
     st.header("🔍 Filtra Ore Lavorate")
+    # ... (tutta la logica dei filtri rimane identica)
     distincts = db_manager.timesheet_distincts()
     date_from = st.date_input("Da data", value=date.today().replace(day=1))
     date_to = st.date_input("A data", value=date.today())
     selected_operai = st.multiselect("Filtra per Operai", options=distincts.get('operaio', []))
     selected_commesse = st.multiselect("Filtra per Commesse", options=distincts.get('commessa', []))
-
     if st.button("Esegui Filtro", type="primary", use_container_width=True):
         results = db_manager.timesheet_query(
-            date_from=date_from.strftime('%Y-%m-%d'),
-            date_to=date_to.strftime('%Y-%m-%d'),
+            date_from=date_from.strftime('%Y-%m-%d'), date_to=date_to.strftime('%Y-%m-%d'),
             operai=selected_operai if selected_operai else None,
             commesse=selected_commesse if selected_commesse else None,
         )
@@ -82,14 +114,13 @@ with st.sidebar:
         st.dataframe(pd.DataFrame(db_manager.list_documents(limit=10)), use_container_width=True)
 
     st.divider()
+    
     st.header("⚙️ Azioni Rapide")
+    # ... (i pulsanti di azione rimangono identici)
     if st.button("🔄 Svuota Conversazione", use_container_width=True):
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Ciao! La conversazione è stata resettata. Come posso aiutarti?"}]
+        st.session_state.messages = [{"role": "assistant", "content": "Ciao! La conversazione è stata resettata."}]
         st.rerun()
-
-    if st.button("⚠️ Svuota Memoria Dati", type="primary", use_container_width=True,
-                 help="ATTENZIONE: Cancella tutti i documenti e i dati caricati!"):
+    if st.button("⚠️ Svuota Memoria Dati", type="primary", use_container_width=True, help="ATTENZIONE: Cancella tutti i documenti e i dati caricati!"):
         with st.spinner("Cancellazione di tutti i dati in corso..."):
             db_manager.delete_all_data()
         st.session_state.clear()
@@ -98,7 +129,6 @@ with st.sidebar:
 # --- PAGINA PRINCIPALE ---
 st.header("📊 Reportistica Ore")
 
-# Se non ci sono dati filtrati, proviamo a caricarli tutti all'avvio
 if 'filtered_timesheet' not in st.session_state:
     refresh_filtered_data()
 
@@ -112,27 +142,24 @@ else:
 
 st.divider()
 
+# --- LOGICA CHAT ---
 st.header("💬 Chiedi al tuo Assistente di Cantiere")
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Fammi una domanda sui dati generali."}]
+    st.session_state.messages = [{"role": "assistant", "content": "Ciao! Fammi una domanda sui dati dei rapportini."}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- LOGICA CHAT CORRETTA ---
-if prompt := st.chat_input("Scrivi la tua domanda qui..."):
-    # 1. Aggiungi e mostra subito il messaggio dell'utente
+if prompt := st.chat_input("Quante ore ha lavorato Rossi Luca?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. Genera la risposta dell'assistente
     with st.chat_message("assistant"):
         with st.spinner("Sto pensando..."):
             response = get_ai_response(st.session_state.messages)
             st.markdown(response)
-
-    # 3. Solo alla fine, aggiungi la risposta dell'assistente alla cronologia
+    
     st.session_state.messages.append({"role": "assistant", "content": response})
