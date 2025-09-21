@@ -37,7 +37,7 @@ with st.expander("🔍 Filtra Dati", expanded=True):
         date_to = st.date_input("A data", value=date.today())
         selected_commesse = st.multiselect("Filtra per Commesse", options=distincts.get('commessa', []))
 
-    if st.button("Esegui Filtro", type="primary", use_container_width=True):
+    if st.button("Esegui Filtro", type="primary", width='stretch'):
         refresh_filtered_data(date_from, date_to, selected_operai, selected_commesse)
 
 # Inizializza i dati al primo caricamento

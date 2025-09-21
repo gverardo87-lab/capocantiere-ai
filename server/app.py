@@ -23,16 +23,8 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- FUNZIONE DI CALLBACK PER LA GESTIONE DELL'UPLOAD ---
-def process_uploaded_file():
-    """
-    Questa funzione viene chiamata automaticamente da Streamlit ogni volta
-    che un nuovo file viene caricato nel file_uploader.
-    """
-    uploaded_file = st.session_state.get("file_uploader")
-    if uploaded_file is None:
-        return
-
+def process_file(uploaded_file):
+    """Sposta la logica di elaborazione in una funzione separata per chiarezza."""
     file_bytes = uploaded_file.getvalue()
     filename = uploaded_file.name
     sha256_hash = file_sha256(file_bytes)
@@ -67,22 +59,19 @@ def process_uploaded_file():
                 document_id, [(f.name, f.value, f.confidence, f.method) for f in fields]
             )
 
-    # L'uploader si svuota da solo grazie alla gestione "on_change".
-    # Rimuoviamo le righe che causavano l'errore.
-
-
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("🏗️ CapoCantiere AI")
 
     with st.expander("➕ Carica Documenti", expanded=True):
-        st.file_uploader(
+        uploaded_file = st.file_uploader(
             "Seleziona un documento da analizzare",
             type=["pdf", "docx", "xlsx", "csv"],
             label_visibility="collapsed",
-            key="file_uploader",
-            on_change=process_uploaded_file
         )
+        if uploaded_file:
+            if st.button("Elabora Documento", type="primary", width='stretch'):
+                process_file(uploaded_file)
     
     st.divider()
 
@@ -91,7 +80,7 @@ with st.sidebar:
 
     st.divider()
     
-    if st.button("⚠️ Svuota Memoria Dati", type="primary", use_container_width=True, help="ATTENZIONE: Cancella tutti i documenti e i dati caricati!"):
+    if st.button("⚠️ Svuota Memoria Dati", type="primary", width='stretch', help="ATTENZIONE: Cancella tutti i documenti e i dati caricati!"):
         with st.spinner("Cancellazione di tutti i dati in corso..."):
             db_manager.delete_all_data()
         st.session_state.clear()

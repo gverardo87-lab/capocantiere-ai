@@ -34,6 +34,6 @@ if prompt := st.chat_input("Quante ore ha lavorato Rossi Luca?"):
 
 with st.sidebar:
     st.divider()
-    if st.button("🔄 Svuota Conversazione", use_container_width=True):
+    if st.button("🔄 Svuota Conversazione", width='stretch'):
         st.session_state.messages = [{"role": "assistant", "content": "Ciao! La conversazione è stata resettata."}]
         st.rerun()

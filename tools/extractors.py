@@ -182,7 +182,9 @@ def read_text_and_kind(filename: str, data: bytes) -> Tuple[str, str]:
                 header = pd.read_csv(f, nrows=0).columns.str.lower().to_list()
             if {"data", "commessa", "operaio", "ore"}.issubset(set(header)):
                 return data.decode('utf-8', errors='ignore'), "RAPPORTO_CSV"
-        except Exception:
+        except Exception as e:
+            # This is a critical debugging step to see if header parsing is failing silently
+            print(f"DEBUG: Could not read CSV header for kind detection: {e}")
             pass
     if mime_type == "application/pdf":
         text = extract_text_from_pdf(data)

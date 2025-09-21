@@ -191,6 +191,51 @@ class Database:
         with self._connect() as conn:
             conn.execute("INSERT INTO commesse (nome, cliente) VALUES (?, ?)", (nome, cliente))
 
+    def update_commessa(self, commessa_id: int, updates: Dict[str, Any]):
+        """Aggiorna i campi di una commessa specifica."""
+        if not updates:
+            return
+
+        set_clauses = []
+        params = []
+        for key, value in updates.items():
+            # Validiamo i campi per evitare SQL injection, anche se il rischio è basso qui
+            if key in ["nome", "cliente", "stato"]:
+                set_clauses.append(f"{key} = ?")
+                params.append(value)
+
+        if not set_clauses:
+            return
+
+        params.append(commessa_id)
+        sql = f"UPDATE commesse SET {', '.join(set_clauses)} WHERE id = ?"
+
+        with self._connect() as conn:
+            conn.execute(sql, tuple(params))
+
+    def get_summary_data(self) -> List[Dict[str, Any]]:
+        """
+        Esegue una query di riepilogo che calcola le ore totali per operaio e per commessa.
+        """
+        sql = """
+            SELECT
+                p.nome_completo AS operaio,
+                c.nome AS commessa,
+                SUM(t.ore) AS ore_totali
+            FROM
+                timesheet_rows t
+            JOIN
+                personale p ON t.personale_id = p.id
+            JOIN
+                commesse c ON t.commessa_id = c.id
+            GROUP BY
+                p.nome_completo, c.nome
+            ORDER BY
+                p.nome_completo, c.nome;
+        """
+        rows = self._query(sql)
+        return [dict(row) for row in rows]
+
     # --- ECCO LA FUNZIONE SPOSTATA AL POSTO GIUSTO ---
     def delete_all_data(self):
         """CANCELLA TUTTI I DATI da tutte le tabelle per un reset pulito."""
