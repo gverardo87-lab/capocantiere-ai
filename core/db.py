@@ -68,7 +68,7 @@ class Database:
                 );
                 CREATE TABLE IF NOT EXISTS timesheet_rows (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-                    data TEXT, ore REAL, descrizione TEXT,
+                    data TEXT, ore REAL, descrizione TEXT, reparto TEXT,
                     personale_id INTEGER NOT NULL REFERENCES personale(id),
                     commessa_id INTEGER NOT NULL REFERENCES commesse(id)
                 );
@@ -126,18 +126,17 @@ class Database:
                 if not operaio or not commessa:
                     continue
 
-                # These get_or_create calls are now part of the same transaction
                 personale_id = self.get_or_create_personale(operaio)
                 commessa_id = self.get_or_create_commessa(commessa)
 
                 to_insert.append((
-                    document_id, r.get('data'), r.get('ore'), r.get('descrizione'),
+                    document_id, r.get('data'), r.get('ore'), r.get('descrizione'), r.get('reparto'),
                     personale_id, commessa_id
                 ))
 
             if to_insert:
                 self.conn.executemany(
-                    "INSERT INTO timesheet_rows (document_id, data, ore, descrizione, personale_id, commessa_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO timesheet_rows (document_id, data, ore, descrizione, reparto, personale_id, commessa_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     to_insert
                 )
 
@@ -148,11 +147,12 @@ class Database:
     def timesheet_distincts(self) -> Dict[str, List[str]]:
         return {
             "commessa": [r["nome"] for r in self._query("SELECT nome FROM commesse ORDER BY nome ASC")],
-            "operaio": [r["nome_completo"] for r in self._query("SELECT nome_completo FROM personale ORDER BY nome_completo ASC")]
+            "operaio": [r["nome_completo"] for r in self._query("SELECT nome_completo FROM personale ORDER BY nome_completo ASC")],
+            "reparto": [r["reparto"] for r in self._query("SELECT DISTINCT reparto FROM timesheet_rows WHERE reparto IS NOT NULL AND reparto <> '' ORDER BY reparto ASC")]
         }
 
-    def timesheet_query(self, date_from: Optional[str] = None, date_to: Optional[str] = None, commesse: Optional[List[str]] = None, operai: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        sql = "SELECT t.id, t.document_id, t.data, p.nome_completo AS operaio, c.nome AS commessa, t.ore, t.descrizione FROM timesheet_rows t JOIN personale p ON t.personale_id = p.id JOIN commesse c ON t.commessa_id = c.id WHERE 1=1"
+    def timesheet_query(self, date_from: Optional[str] = None, date_to: Optional[str] = None, commesse: Optional[List[str]] = None, operai: Optional[List[str]] = None, reparti: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        sql = "SELECT t.id, t.document_id, t.data, p.nome_completo AS operaio, c.nome AS commessa, t.reparto, t.ore, t.descrizione FROM timesheet_rows t JOIN personale p ON t.personale_id = p.id JOIN commesse c ON t.commessa_id = c.id WHERE 1=1"
         params: List[Any] = []
         if date_from:
             sql += " AND t.data >= ?"; params.append(date_from)
@@ -162,6 +162,8 @@ class Database:
             sql += f" AND c.nome IN ({','.join('?' for _ in commesse)})"; params.extend(commesse)
         if operai:
             sql += f" AND p.nome_completo IN ({','.join('?' for _ in operai)})"; params.extend(operai)
+        if reparti:
+            sql += f" AND t.reparto IN ({','.join('?' for _ in reparti)})"; params.extend(reparti)
         sql += " ORDER BY t.data ASC, t.id ASC"
         rows = self._query(sql, params)
         return [dict(r) for r in rows]

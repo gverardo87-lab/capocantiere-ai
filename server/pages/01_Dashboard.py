@@ -15,13 +15,14 @@ st.title("📈 Dashboard Reportistica Ore")
 st.markdown("Visualizza e filtra le ore lavorate registrate nel sistema.")
 
 # --- FUNZIONE HELPER PER RICARICARE I DATI ---
-def refresh_filtered_data(date_from=None, date_to=None, operai=None, commesse=None):
+def refresh_filtered_data(date_from=None, date_to=None, operai=None, commesse=None, reparti=None):
     """Esegue una query con i filtri forniti e aggiorna lo stato della sessione."""
     results = db_manager.timesheet_query(
         date_from=date_from.strftime('%Y-%m-%d') if date_from else None,
         date_to=date_to.strftime('%Y-%m-%d') if date_to else None,
         operai=operai if operai else None,
         commesse=commesse if commesse else None,
+        reparti=reparti if reparti else None,
     )
     st.session_state['filtered_timesheet'] = pd.DataFrame(results) if results else pd.DataFrame()
 
@@ -29,16 +30,21 @@ def refresh_filtered_data(date_from=None, date_to=None, operai=None, commesse=No
 with st.expander("🔍 Filtra Dati", expanded=True):
     distincts = db_manager.timesheet_distincts()
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         date_from = st.date_input("Da data", value=date.today().replace(day=1))
         selected_operai = st.multiselect("Filtra per Operai", options=distincts.get('operaio', []))
     with col2:
         date_to = st.date_input("A data", value=date.today())
         selected_commesse = st.multiselect("Filtra per Commesse", options=distincts.get('commessa', []))
+    with col3:
+        st.write("") # Spacer
+        st.write("") # Spacer
+        selected_reparti = st.multiselect("Filtra per Reparti", options=distincts.get('reparto', []))
+
 
     if st.button("Esegui Filtro", type="primary", width='stretch'):
-        refresh_filtered_data(date_from, date_to, selected_operai, selected_commesse)
+        refresh_filtered_data(date_from, date_to, selected_operai, selected_commesse, selected_reparti)
 
 # Inizializza i dati al primo caricamento
 if 'filtered_timesheet' not in st.session_state:

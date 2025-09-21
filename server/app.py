@@ -1,102 +1,46 @@
 from __future__ import annotations
-
-import os
-import sys
-import pandas as pd
 import streamlit as st
 
-# Import custom per aggiungere la root del progetto al path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from core.db import db_manager
-from tools.extractors import (
-    read_text_and_kind,
-    file_sha256,
-    parse_timesheet_csv,
-    extract_fields_with_ai
-)
-
-# Configurazione della pagina Streamlit
 st.set_page_config(
     page_title="🏗️ CapoCantiere AI",
     page_icon="🏗️",
     layout="wide",
 )
 
-def process_file(uploaded_file):
-    """Sposta la logica di elaborazione in una funzione separata per chiarezza."""
-    file_bytes = uploaded_file.getvalue()
-    filename = uploaded_file.name
-    sha256_hash = file_sha256(file_bytes)
+st.title("Benvenuto in CapoCantiere AI")
+st.markdown(
+    """
+    **Applicazione per la gestione semplificata del personale e dei lavori di cantiere.**
 
-    with st.spinner(f"Analisi di '{filename}'..."):
-        text, kind = read_text_and_kind(filename, file_bytes)
-        document_id = db_manager.upsert_document(
-            kind=kind.replace("_CSV", ""), filename=filename, content_type=uploaded_file.type,
-            size_bytes=uploaded_file.size, sha256=sha256_hash
-        )
+    Questa applicazione è stata creata per aiutare i manager di cantiere a tenere traccia delle ore,
+    del personale e delle commesse in modo efficiente.
 
-        fields = []
-        if kind == "RAPPORTO_CSV":
-            try:
-                rows, summary = parse_timesheet_csv(file_bytes)
-                fields.extend(summary)
-                db_manager.replace_timesheet_rows(document_id, rows)
-                st.success(f"Rapportino '{filename}' importato con successo!")
-            except Exception as e:
-                st.error(f"Errore nell'elaborazione del CSV: {e}")
-        else:
-            st.info(f"Documento classificato come '{kind}'. Avvio estrazione con AI...")
-            ai_fields = extract_fields_with_ai(text, kind)
-            if ai_fields:
-                fields.extend(ai_fields)
-                st.success(f"Estrazione AI completata! Trovati {len(ai_fields)} campi.")
-            else:
-                st.warning("L'estrazione AI non ha prodotto risultati validi.")
+    ---
 
-        if fields:
-            db_manager.bulk_upsert_extractions(
-                document_id, [(f.name, f.value, f.confidence, f.method) for f in fields]
-            )
+    ### Come Iniziare:
 
-# --- SIDEBAR ---
+    1.  **Carica Documenti:** Vai alla pagina `Carica Documenti` dal menu a sinistra per aggiungere nuovi file come rapportini ore, fatture o altri documenti.
+
+    2.  **Gestisci Dati:** Usa le pagine `Personale` e `Commesse` per visualizzare e gestire le anagrafiche dei tuoi lavoratori e dei tuoi progetti.
+    
+    3.  **Visualizza Report:** La `Dashboard` offre una vista filtrabile delle ore lavorate, mentre la pagina `Riepilogo` fornisce una vista d'insieme aggregata.
+
+    4.  **Assitente AI:** Fai domande in linguaggio naturale sui tuoi dati nella pagina `Assistente AI`.
+
+    ---
+
+    *Seleziona una pagina dal menu a sinistra per iniziare.*
+    """
+)
+
 with st.sidebar:
-    st.title("🏗️ CapoCantiere AI")
-
-    with st.expander("➕ Carica Documenti", expanded=True):
-        uploaded_file = st.file_uploader(
-            "Seleziona un documento da analizzare",
-            type=["pdf", "docx", "xlsx", "csv"],
-            label_visibility="collapsed",
-        )
-        if uploaded_file:
-            if st.button("Elabora Documento", type="primary", width='stretch'):
-                process_file(uploaded_file)
-    
+    st.success("Seleziona una pagina per iniziare.")
     st.divider()
-
-    with st.expander("🗂️ Archivio Documenti Recenti"):
-        st.dataframe(pd.DataFrame(db_manager.list_documents(limit=10)), use_container_width=True, hide_index=True)
-
-    st.divider()
-    
+    # The "Svuota Memoria" button is a global action, so it can live here.
     if st.button("⚠️ Svuota Memoria Dati", type="primary", width='stretch', help="ATTENZIONE: Cancella tutti i documenti e i dati caricati!"):
+        # We need to import db_manager here, only when needed.
+        from core.db import db_manager
         with st.spinner("Cancellazione di tutti i dati in corso..."):
             db_manager.delete_all_data()
         st.session_state.clear()
         st.rerun()
-
-# --- PAGINA PRINCIPALE ---
-st.title("Benvenuto in CapoCantiere AI")
-st.markdown(
-    """
-    Questa è la tua applicazione per la gestione semplificata del personale e dei lavori di cantiere.
-
-    **Usa il menu a sinistra per navigare tra le sezioni:**
-
-    - **`Dashboard`**: Visualizza la reportistica delle ore lavorate.
-    - **`Assistente AI`**: Chatta con l'intelligenza artificiale per analizzare i tuoi dati.
-
-    Per iniziare, carica un documento (come un rapportino ore in formato CSV) usando il pannello **Carica Documenti** nella barra laterale.
-    """
-)

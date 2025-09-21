@@ -61,9 +61,8 @@ def get_ai_response(chat_history: list[dict]) -> str:
         print(f"ERRORE nella fase di intent recognition: {e}")
         return "Mi dispiace, non sono riuscito a capire la tua domanda. Prova a riformularla."
 
-    # --- FASE 2: ESECUZIONE DELLA QUERY SUL DATABASE ---
+    # --- FASE 2: ESECUZIONE DELLA QUERY E PRE-ELABORAZIONE DEI DATI ---
     try:
-        # Usiamo i parametri estratti dall'AI per chiamare la nostra funzione esistente
         results = db_manager.timesheet_query(
             operai=query_params.get("operai"),
             commesse=query_params.get("commesse")
@@ -71,8 +70,19 @@ def get_ai_response(chat_history: list[dict]) -> str:
         df = pd.DataFrame(results) if results else pd.DataFrame()
         
         context_data = "Non ho trovato dati corrispondenti ai filtri richiesti."
+
+        # Se l'utente chiede un calcolo numerico, lo facciamo noi e passiamo solo il risultato.
         if not df.empty:
-            context_data = df.to_string() # Diamo all'AI i dati grezzi in formato testo
+            # Semplice euristica per capire se l'utente vuole un totale
+            is_sum_query = any(keyword in user_query.lower() for keyword in ["totali", "somma", "quante ore"])
+
+            if is_sum_query:
+                total_hours = df['ore'].sum()
+                # Il contesto per l'AI ora è il numero esatto, non la tabella.
+                context_data = f"Il calcolo delle ore totali per la richiesta data è: {total_hours:.2f} ore."
+            else:
+                # Per domande generiche, forniamo la tabella come prima.
+                context_data = df.to_string()
 
     except Exception as e:
         print(f"ERRORE nella fase di query al DB: {e}")
@@ -81,9 +91,11 @@ def get_ai_response(chat_history: list[dict]) -> str:
     # --- FASE 3: GENERAZIONE DELLA RISPOSTA FINALE ---
     response_prompt = f"""
     Sei "CapoCantiere AI", un assistente virtuale.
-    Rispondi alla domanda originale dell'utente in modo chiaro e conciso, usando i dati che ti fornisco.
+    Rispondi alla domanda originale dell'utente in modo chiaro e conciso, basandoti ESATTAMENTE sui dati che ti fornisco qui sotto.
+    Se i dati sono un numero o un calcolo, riportalo in una frase completa.
+    Se i dati sono una tabella, riassumili o elenca le informazioni principali.
 
-    Dati estratti dal database:
+    Dati su cui basare la risposta:
     ---
     {context_data}
     ---
