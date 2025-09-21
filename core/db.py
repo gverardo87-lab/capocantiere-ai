@@ -46,7 +46,7 @@ class Database:
                     UNIQUE(document_id, field_name)
                 );
                 CREATE TABLE IF NOT EXISTS personale (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE NOT NULL
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, nome_completo TEXT UNIQUE NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS commesse (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE NOT NULL
@@ -84,12 +84,20 @@ class Database:
                 ((document_id, name, val, conf, meth) for name, val, conf, meth in items)
             )
 
-    def get_or_create_master_data(self, table: str, name: str) -> int:
+    def get_or_create_personale(self, name: str) -> int:
         with self.conn:
-            row = self.conn.execute(f"SELECT id FROM {table} WHERE nome = ?", (name,)).fetchone()
+            row = self.conn.execute("SELECT id FROM personale WHERE nome_completo = ?", (name,)).fetchone()
             if row:
                 return row['id']
-            cursor = self.conn.execute(f"INSERT INTO {table} (nome) VALUES (?)", (name,))
+            cursor = self.conn.execute("INSERT INTO personale (nome_completo) VALUES (?)", (name,))
+            return cursor.lastrowid
+
+    def get_or_create_commessa(self, name: str) -> int:
+        with self.conn:
+            row = self.conn.execute("SELECT id FROM commesse WHERE nome = ?", (name,)).fetchone()
+            if row:
+                return row['id']
+            cursor = self.conn.execute("INSERT INTO commesse (nome) VALUES (?)", (name,))
             return cursor.lastrowid
 
     def replace_timesheet_rows(self, document_id: int, rows: List[Dict[str, Any]]):
@@ -102,8 +110,8 @@ class Database:
                 if not operaio_name or not commessa_name:
                     continue
 
-                personale_id = self.get_or_create_master_data('personale', operaio_name)
-                commessa_id = self.get_or_create_master_data('commesse', commessa_name)
+                personale_id = self.get_or_create_personale(operaio_name)
+                commessa_id = self.get_or_create_commessa(commessa_name)
 
                 to_insert.append((
                     document_id, r.get('data'), r.get('ore'), r.get('descrizione'), r.get('reparto'),
@@ -122,17 +130,17 @@ class Database:
     def timesheet_distincts(self) -> Dict[str, List[str]]:
         return {
             "commessa": [r["nome"] for r in self._query("SELECT nome FROM commesse ORDER BY nome ASC")],
-            "operaio": [r["nome"] for r in self._query("SELECT nome FROM personale ORDER BY nome ASC")],
+            "operaio": [r["nome_completo"] for r in self._query("SELECT nome_completo FROM personale ORDER BY nome_completo ASC")],
             "reparto": [r["reparto"] for r in self._query("SELECT DISTINCT reparto FROM timesheet_rows WHERE reparto IS NOT NULL AND reparto <> '' ORDER BY reparto ASC")]
         }
 
     def timesheet_query(self, date_from: Optional[str] = None, date_to: Optional[str] = None, commesse: Optional[List[str]] = None, operai: Optional[List[str]] = None, reparti: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        sql = "SELECT t.id, t.document_id, t.data, p.nome AS operaio, c.nome AS commessa, t.reparto, t.ore, t.descrizione FROM timesheet_rows t JOIN personale p ON t.personale_id = p.id JOIN commesse c ON t.commessa_id = c.id WHERE 1=1"
+        sql = "SELECT t.id, t.document_id, t.data, p.nome_completo AS operaio, c.nome AS commessa, t.reparto, t.ore, t.descrizione FROM timesheet_rows t JOIN personale p ON t.personale_id = p.id JOIN commesse c ON t.commessa_id = c.id WHERE 1=1"
         params: List[Any] = []
         if date_from: sql += " AND t.data >= ?"; params.append(date_from)
         if date_to: sql += " AND t.data <= ?"; params.append(date_to)
         if commesse: sql += f" AND c.nome IN ({','.join('?' for _ in commesse)})"; params.extend(commesse)
-        if operai: sql += f" AND p.nome IN ({','.join('?' for _ in operai)})"; params.extend(operai)
+        if operai: sql += f" AND p.nome_completo IN ({','.join('?' for _ in operai)})"; params.extend(operai)
         if reparti: sql += f" AND t.reparto IN ({','.join('?' for _ in reparti)})"; params.extend(reparti)
         sql += " ORDER BY t.data ASC, t.id ASC"
         rows = self._query(sql, params)
