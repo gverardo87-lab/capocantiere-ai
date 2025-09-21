@@ -173,19 +173,31 @@ def classify_kind(text: str) -> str:
 
 # --- Funzione Principale di Orchestrazione (invariata) ---
 def read_text_and_kind(filename: str, data: bytes) -> Tuple[str, str]:
-    # ... (il resto di questa funzione rimane uguale)
-    mime_type = sniff_mime(filename)
-    text = ""
+    """
+    Orchestrates text extraction and document classification.
+    This new version gives priority to structural checks (like CSV headers)
+    before falling back to content-based classification.
+    """
+    # --- Priority 1: Structural Check for Timesheet CSV ---
     if filename.lower().endswith('.csv'):
         try:
+            # We read the header to check if it's a valid timesheet format.
             with io.BytesIO(data) as f:
-                header = pd.read_csv(f, nrows=0).columns.str.lower().to_list()
+                header = pd.read_csv(f, nrows=0, sep=None, engine='python').columns.str.lower().to_list()
+
+            # If it has the required columns, we definitively classify it and return.
             if {"data", "commessa", "operaio", "ore"}.issubset(set(header)):
+                # For CSVs, the "text" is the raw byte content, to be parsed later.
                 return data.decode('utf-8', errors='ignore'), "RAPPORTO_CSV"
         except Exception as e:
-            # This is a critical debugging step to see if header parsing is failing silently
-            print(f"DEBUG: Could not read CSV header for kind detection: {e}")
+            # If header parsing fails, we can't treat it as a special CSV.
+            # We'll let it fall through to be treated as a generic text file.
+            print(f"INFO: Could not parse CSV header for '{filename}'. Falling back to text extraction. Error: {e}")
             pass
+
+    # --- Priority 2: Text Extraction from Common Office Formats ---
+    mime_type = sniff_mime(filename)
+    text = ""
     if mime_type == "application/pdf":
         text = extract_text_from_pdf(data)
     elif "wordprocessingml" in mime_type or filename.endswith(".docx"):
@@ -193,9 +205,13 @@ def read_text_and_kind(filename: str, data: bytes) -> Tuple[str, str]:
     elif "spreadsheetml" in mime_type or filename.endswith(".xlsx"):
         text = extract_text_from_xlsx(data)
     else:
+        # Fallback for plain text or unknown file types
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             text = data.decode("latin-1", errors="ignore")
+
+    # --- Priority 3: Content-based Classification ---
+    # This only runs if the file wasn't identified as a special CSV format.
     kind = classify_kind(text)
     return text, kind
