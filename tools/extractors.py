@@ -173,17 +173,22 @@ def classify_kind(text: str) -> str:
 
 # --- Funzione Principale di Orchestrazione (invariata) ---
 def read_text_and_kind(filename: str, data: bytes) -> Tuple[str, str]:
-    # ... (il resto di questa funzione rimane uguale)
-    mime_type = sniff_mime(filename)
-    text = ""
+    """
+    Orchestrates text extraction and document classification.
+    Gives priority to structural checks (CSV headers) before content-based classification.
+    """
     if filename.lower().endswith('.csv'):
         try:
             with io.BytesIO(data) as f:
-                header = pd.read_csv(f, nrows=0).columns.str.lower().to_list()
+                header = pd.read_csv(f, nrows=0, sep=None, engine='python').columns.str.lower().to_list()
             if {"data", "commessa", "operaio", "ore"}.issubset(set(header)):
                 return data.decode('utf-8', errors='ignore'), "RAPPORTO_CSV"
-        except Exception:
+        except Exception as e:
+            print(f"INFO: Could not parse CSV header for '{filename}'. Falling back to text extraction. Error: {e}")
             pass
+
+    mime_type = sniff_mime(filename)
+    text = ""
     if mime_type == "application/pdf":
         text = extract_text_from_pdf(data)
     elif "wordprocessingml" in mime_type or filename.endswith(".docx"):
@@ -195,5 +200,6 @@ def read_text_and_kind(filename: str, data: bytes) -> Tuple[str, str]:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             text = data.decode("latin-1", errors="ignore")
+
     kind = classify_kind(text)
     return text, kind

@@ -73,9 +73,17 @@ def process_uploaded_file():
             )
 
 # --- FUNZIONE HELPER PER RICARICARE I DATI ---
-def refresh_filtered_data():
-    """Esegue una query con tutti i dati e aggiorna lo stato della sessione."""
-    results = db_manager.timesheet_query()
+def refresh_filtered_data(filters=None):
+    """Esegue una query con i filtri forniti e aggiorna lo stato della sessione."""
+    if filters is None:
+        filters = {}
+    results = db_manager.timesheet_query(
+        date_from=filters.get('date_from'),
+        date_to=filters.get('date_to'),
+        operai=filters.get('operai'),
+        commesse=filters.get('commesse'),
+        reparti=filters.get('reparti')
+    )
     st.session_state['filtered_timesheet'] = pd.DataFrame(results) if results else pd.DataFrame()
 
 
@@ -84,7 +92,6 @@ with st.sidebar:
     st.title("🏗️ CapoCantiere AI")
 
     with st.expander("➕ Carica Documenti", expanded=True):
-        # ORA USIAMO IL PARAMETRO on_change PER GESTIRE L'UPLOAD
         st.file_uploader(
             "Seleziona un documento",
             type=["pdf", "docx", "xlsx", "csv"],
@@ -94,19 +101,22 @@ with st.sidebar:
         )
 
     st.header("🔍 Filtra Ore Lavorate")
-    # ... (tutta la logica dei filtri rimane identica)
     distincts = db_manager.timesheet_distincts()
     date_from = st.date_input("Da data", value=date.today().replace(day=1))
     date_to = st.date_input("A data", value=date.today())
     selected_operai = st.multiselect("Filtra per Operai", options=distincts.get('operaio', []))
     selected_commesse = st.multiselect("Filtra per Commesse", options=distincts.get('commessa', []))
+    selected_reparti = st.multiselect("Filtra per Reparti", options=distincts.get('reparto', []))
+
     if st.button("Esegui Filtro", type="primary", use_container_width=True):
-        results = db_manager.timesheet_query(
-            date_from=date_from.strftime('%Y-%m-%d'), date_to=date_to.strftime('%Y-%m-%d'),
-            operai=selected_operai if selected_operai else None,
-            commesse=selected_commesse if selected_commesse else None,
-        )
-        st.session_state['filtered_timesheet'] = pd.DataFrame(results) if results else pd.DataFrame()
+        filters = {
+            "date_from": date_from.strftime('%Y-%m-%d'),
+            "date_to": date_to.strftime('%Y-%m-%d'),
+            "operai": selected_operai if selected_operai else None,
+            "commesse": selected_commesse if selected_commesse else None,
+            "reparti": selected_reparti if selected_reparti else None
+        }
+        refresh_filtered_data(filters)
 
     st.divider()
 
