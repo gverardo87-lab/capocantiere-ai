@@ -75,7 +75,7 @@ def parse_timesheet_csv(data: bytes) -> Tuple[List[Dict[str, Any]], List[Extract
     REQUIRED_COLUMNS = {"data", "commessa", "operaio", "ore"}
     
     with io.BytesIO(data) as f:
-        df = pd.read_csv(f)
+        df = pd.read_csv(f, sep=None, engine='python')
 
     # Convertiamo i nomi delle colonne in minuscolo per un controllo robusto
     df.columns = df.columns.str.lower()
