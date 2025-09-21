@@ -67,9 +67,8 @@ def process_uploaded_file():
                 document_id, [(f.name, f.value, f.confidence, f.method) for f in fields]
             )
 
-    # Svuota il file uploader per permettere di caricare lo stesso file di nuovo
-    st.session_state.file_uploader = None
-    st.rerun()
+    # L'uploader si svuota da solo grazie alla gestione "on_change".
+    # Rimuoviamo le righe che causavano l'errore.
 
 
 # --- SIDEBAR ---
