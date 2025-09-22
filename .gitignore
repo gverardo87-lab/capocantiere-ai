@@ -118,3 +118,14 @@ dmypy.json
 
 # File della Knowledge Base (PDF, DOCX, etc.)
 knowledge_base/documents/*
+
+# --- NOSTRE REGOLE CUSTOM ---
+
+# Ignora i file di database SQLite nella cartella data
+data/*.db
+
+# File della Knowledge Base (PDF, DOCX, etc.)
+knowledge_base/documents/*
+
+# Ignora l'intera cartella del Vector Store
+knowledge_base/vectorstore/
