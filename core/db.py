@@ -55,7 +55,9 @@ class Database:
                 );
                 CREATE TABLE IF NOT EXISTS timesheet_rows (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-                    data TEXT, orario_ingresso TEXT, orario_uscita TEXT, descrizione TEXT, reparto TEXT,
+                    data TEXT, orario_ingresso TEXT, orario_uscita TEXT,
+                    durata_pausa_ore REAL DEFAULT 1.0,
+                    descrizione TEXT, reparto TEXT,
                     personale_id INTEGER NOT NULL REFERENCES personale(id),
                     commessa_id INTEGER NOT NULL REFERENCES commesse(id)
                 );
@@ -117,6 +119,7 @@ class Database:
 
                 to_insert.append((
                     document_id, r.get('data'), r.get('orario_ingresso'), r.get('orario_uscita'),
+                    r.get('durata_pausa_ore', 1.0),
                     r.get('descrizione'), r.get('reparto'),
                     personale_id, commessa_id
                 ))
@@ -124,8 +127,8 @@ class Database:
                 self.conn.executemany(
                     """
                     INSERT INTO timesheet_rows (
-                        document_id, data, orario_ingresso, orario_uscita, descrizione, reparto, personale_id, commessa_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        document_id, data, orario_ingresso, orario_uscita, durata_pausa_ore, descrizione, reparto, personale_id, commessa_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     to_insert
                 )
@@ -142,7 +145,7 @@ class Database:
         }
 
     def timesheet_query(self, date_from: Optional[str] = None, date_to: Optional[str] = None, commesse: Optional[List[str]] = None, operai: Optional[List[str]] = None, reparti: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        sql = "SELECT t.id, t.document_id, t.data, p.nome_completo AS operaio, c.nome AS commessa, t.reparto, t.orario_ingresso, t.orario_uscita, t.descrizione FROM timesheet_rows t JOIN personale p ON t.personale_id = p.id JOIN commesse c ON t.commessa_id = c.id WHERE 1=1"
+        sql = "SELECT t.id, t.document_id, t.data, p.nome_completo AS operaio, c.nome AS commessa, t.reparto, t.orario_ingresso, t.orario_uscita, t.durata_pausa_ore, t.descrizione FROM timesheet_rows t JOIN personale p ON t.personale_id = p.id JOIN commesse c ON t.commessa_id = c.id WHERE 1=1"
         params: List[Any] = []
         if date_from: sql += " AND t.data >= ?"; params.append(date_from)
         if date_to: sql += " AND t.data <= ?"; params.append(date_to)
@@ -158,7 +161,8 @@ class Database:
             record = dict(r)
             record['ore_lavorate'] = calculate_worked_hours(
                 start_time=record.get('orario_ingresso'),
-                end_time=record.get('orario_uscita')
+                end_time=record.get('orario_uscita'),
+                break_duration_hours=record.get('durata_pausa_ore', 1.0)
             )
             results.append(record)
 

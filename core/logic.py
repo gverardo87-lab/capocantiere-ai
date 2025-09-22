@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
 
-def calculate_worked_hours(start_time: str | None, end_time: str | None, break_duration_hours: float = 1.0) -> float:
+def calculate_worked_hours(start_time: str | None, end_time: str | None, break_duration_hours: float) -> float:
     """
     Calcola le ore lavorate da un orario di inizio e fine, sottraendo una pausa.
 
