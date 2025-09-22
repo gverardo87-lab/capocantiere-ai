@@ -21,4 +21,4 @@ DB_PATH = str(Path(os.getenv("DB_PATH", DATA_DIR / "capocantiere.db")).resolve()
 
 # --- VARIABILI PER OLLAMA (DEFINITE UNA SOLA VOLTA) ---
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2:7b-instruct-q4_K_M")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
