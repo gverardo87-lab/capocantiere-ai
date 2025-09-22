@@ -115,3 +115,6 @@ dmypy.json
 
 # VS Code
 .vscode/
+
+# File della Knowledge Base (PDF, DOCX, etc.)
+knowledge_base/documents/*
