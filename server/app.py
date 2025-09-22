@@ -17,6 +17,7 @@ from tools.extractors import (
     extract_fields_with_ai
 )
 from core.chat_logic import get_ai_response
+from core.logic import calculate_worked_hours
 
 # Configurazione della pagina Streamlit
 st.set_page_config(
@@ -31,7 +32,6 @@ def process_uploaded_file():
     Questa funzione viene chiamata automaticamente da Streamlit ogni volta
     che un nuovo file viene caricato nel file_uploader.
     """
-    # Prendiamo il file dallo stato della sessione, usando la chiave del widget
     uploaded_file = st.session_state.get("file_uploader")
     if uploaded_file is None:
         return
@@ -50,11 +50,10 @@ def process_uploaded_file():
         fields = []
         if kind == "RAPPORTO_CSV":
             try:
-                rows, summary = parse_timesheet_csv(file_bytes)
-                fields.extend(summary)
+                # La funzione di parsing non restituisce più un riepilogo
+                rows, _ = parse_timesheet_csv(file_bytes)
                 db_manager.replace_timesheet_rows(document_id, rows)
                 st.success(f"Rapportino '{filename}' importato!")
-                # Aggiorniamo i dati per la tabella principale
                 refresh_filtered_data()
             except Exception as e:
                 st.error(f"Errore nel CSV: {e}")
@@ -84,7 +83,17 @@ def refresh_filtered_data(filters=None):
         commesse=filters.get('commesse'),
         reparti=filters.get('reparti')
     )
-    st.session_state['filtered_timesheet'] = pd.DataFrame(results) if results else pd.DataFrame()
+
+    df = pd.DataFrame(results) if results else pd.DataFrame()
+
+    if not df.empty:
+        # Applichiamo la logica di calcolo delle ore
+        df['ore_lavorate'] = df.apply(
+            lambda row: calculate_worked_hours(row['orario_ingresso'], row['orario_uscita']),
+            axis=1
+        )
+
+    st.session_state['filtered_timesheet'] = df
 
 
 # --- SIDEBAR ---
@@ -126,7 +135,6 @@ with st.sidebar:
     st.divider()
 
     st.header("⚙️ Azioni Rapide")
-    # ... (i pulsanti di azione rimangono identici)
     if st.button("🔄 Svuota Conversazione", use_container_width=True):
         st.session_state.messages = [{"role": "assistant", "content": "Ciao! La conversazione è stata resettata."}]
         st.rerun()
@@ -143,9 +151,18 @@ if 'filtered_timesheet' not in st.session_state:
     refresh_filtered_data()
 
 df_filtered = st.session_state.get('filtered_timesheet', pd.DataFrame())
+
 if not df_filtered.empty:
-    st.dataframe(df_filtered.drop(columns=['id', 'document_id'], errors='ignore'), use_container_width=True)
-    total_hours = df_filtered['ore'].sum()
+    # Definiamo l'ordine desiderato delle colonne per la visualizzazione
+    display_columns = [
+        'data', 'operaio', 'commessa', 'orario_ingresso', 'orario_uscita', 'ore_lavorate', 'reparto', 'descrizione'
+    ]
+    # Rimuoviamo le colonne non desiderate e riordiniamo
+    df_display = df_filtered[display_columns].copy()
+
+    st.dataframe(df_display, use_container_width=True)
+
+    total_hours = df_filtered['ore_lavorate'].sum()
     st.metric("📈 Totale Ore Filtrate", f"{total_hours:,.2f} ore")
 else:
     st.info("Nessun dato da visualizzare. Carica un rapportino o prova a cambiare i filtri.")

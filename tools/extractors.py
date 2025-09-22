@@ -70,15 +70,14 @@ def extract_text_from_xlsx(data: bytes, max_cells: int = 2000) -> str:
 
 # --- FUNZIONE CORRETTA PER IL PARSING DEL CSV ---
 def parse_timesheet_csv(data: bytes) -> Tuple[List[Dict[str, Any]], List[ExtractedField]]:
-    """Legge un rapportino ore da un file CSV, lo valida e lo struttura."""
-    # Definiamo solo le colonne assolutamente necessarie
-    REQUIRED_COLUMNS = {"data", "commessa", "operaio", "ore"}
+    """Legge un rapportino ore da un file CSV con orari di ingresso/uscita, lo valida e lo struttura."""
+    REQUIRED_COLUMNS = {"data", "commessa", "operaio", "orario_ingresso", "orario_uscita"}
     
     with io.BytesIO(data) as f:
-        df = pd.read_csv(f, sep=None, engine='python')
+        # Usiamo il dtype=str per evitare che pandas interpreti male gli orari come 08:00 -> 8
+        df = pd.read_csv(f, sep=None, engine='python', dtype=str)
 
-    # Convertiamo i nomi delle colonne in minuscolo per un controllo robusto
-    df.columns = df.columns.str.lower()
+    df.columns = df.columns.str.lower().str.strip()
     
     actual_columns = set(df.columns)
     if not REQUIRED_COLUMNS.issubset(actual_columns):
@@ -86,26 +85,26 @@ def parse_timesheet_csv(data: bytes) -> Tuple[List[Dict[str, Any]], List[Extract
 
     # Standardizzazione dei dati
     df['data'] = pd.to_datetime(df['data'], errors='coerce').dt.strftime('%Y-%m-%d')
-    df['ore'] = pd.to_numeric(df['ore'], errors='coerce').fillna(0)
-    df = df.dropna(subset=['data'])
+    # Pulisce gli orari da spazi bianchi extra
+    df['orario_ingresso'] = df['orario_ingresso'].str.strip()
+    df['orario_uscita'] = df['orario_uscita'].str.strip()
+
+    df = df.dropna(subset=['data', 'orario_ingresso', 'orario_uscita'])
     
-    # Assicuriamo che le colonne opzionali esistano, riempiendole con un valore vuoto se mancano
     for col in ['reparto', 'descrizione']:
         if col not in df.columns:
             df[col] = ''
+        df[col] = df[col].fillna('')
 
-    # Creazione dei campi di riepilogo
-    summary_fields = [
-        ExtractedField("periodo_dal", df['data'].min(), "green", "csv-summary"),
-        ExtractedField("periodo_al", df['data'].max(), "green", "csv-summary"),
-        ExtractedField("totale_ore", str(df['ore'].sum()), "green", "csv-summary"),
-        ExtractedField("numero_operai", str(df['operaio'].nunique()), "green", "csv-summary"),
-    ]
+
+    # La logica di riepilogo è stata rimossa perché le ore devono essere calcolate
+    # dalla logica di business (start - end - break)
+    summary_fields = []
     
-    # Selezioniamo solo le colonne che ci interessano per il database
-    final_columns = ['data', 'commessa', 'operaio', 'reparto', 'ore', 'descrizione']
+    final_columns = ['data', 'commessa', 'operaio', 'reparto', 'orario_ingresso', 'orario_uscita', 'descrizione']
     structured_rows = df[final_columns].to_dict('records')
     
+    # La funzione ora ritorna una tupla con il secondo elemento vuoto per mantenere la firma
     return structured_rows, summary_fields
 
 
@@ -181,7 +180,7 @@ def read_text_and_kind(filename: str, data: bytes) -> Tuple[str, str]:
         try:
             with io.BytesIO(data) as f:
                 header = pd.read_csv(f, nrows=0, sep=None, engine='python').columns.str.lower().to_list()
-            if {"data", "commessa", "operaio", "ore"}.issubset(set(header)):
+            if {"data", "commessa", "operaio", "orario_ingresso", "orario_uscita"}.issubset(set(header)):
                 return data.decode('utf-8', errors='ignore'), "RAPPORTO_CSV"
         except Exception as e:
             print(f"INFO: Could not parse CSV header for '{filename}'. Falling back to text extraction. Error: {e}")
