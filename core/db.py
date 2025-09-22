@@ -10,7 +10,7 @@ import streamlit as st
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.config import DB_PATH
-from core.logic import calculate_worked_hours
+from core.logic import calculate_worked_hours, split_hours
 
 
 @st.cache_resource
@@ -159,11 +159,19 @@ class Database:
         results = []
         for r in rows:
             record = dict(r)
-            record['ore_lavorate'] = calculate_worked_hours(
+            worked_hours = calculate_worked_hours(
                 start_time=record.get('orario_ingresso'),
                 end_time=record.get('orario_uscita'),
                 break_duration_hours=record.get('durata_pausa_ore', 1.0)
             )
+
+            # Applica la suddivisione delle ore
+            split = split_hours(worked_hours)
+            record['ore_lavorate'] = worked_hours
+            record['ore_regolari'] = split['regular']
+            record['ore_straordinario'] = split['overtime']
+            record['ore_assenza'] = split['absence']
+
             results.append(record)
 
         return results

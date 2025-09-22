@@ -42,20 +42,22 @@ def calculate_worked_hours(start_time: str | None, end_time: str | None, break_d
 
 def split_hours(total_hours: float, threshold: float = 8.0) -> dict[str, float]:
     """
-    Suddivide le ore totali in ore regolari e straordinari.
+    Suddivide le ore totali in ore regolari, straordinari e assenze.
 
     Args:
         total_hours: Le ore totali lavorate.
-        threshold: La soglia giornaliera oltre la quale le ore sono considerate straordinari.
+        threshold: La soglia giornaliera di ore lavorative.
 
     Returns:
-        Un dizionario con "regular" e "overtime".
+        Un dizionario con "regular", "overtime" e "absence".
     """
     if total_hours > threshold:
         regular_hours = threshold
         overtime_hours = total_hours - threshold
+        absence_hours = 0.0
     else:
         regular_hours = total_hours
         overtime_hours = 0.0
+        absence_hours = threshold - total_hours
 
-    return {"regular": regular_hours, "overtime": overtime_hours}
+    return {"regular": round(regular_hours, 2), "overtime": round(overtime_hours, 2), "absence": round(absence_hours, 2)}

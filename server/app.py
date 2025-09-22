@@ -90,12 +90,11 @@ def refresh_filtered_data(filters=None):
 
     if not df.empty:
         df_daily = df.groupby(['data', 'operaio']).agg(
-            ore_lavorate=('ore_lavorate', 'sum')
+            ore_lavorate=('ore_lavorate', 'sum'),
+            ore_regolari=('ore_regolari', 'sum'),
+            ore_straordinario=('ore_straordinario', 'sum'),
+            ore_assenza=('ore_assenza', 'sum')
         ).reset_index()
-
-        split_data = df_daily['ore_lavorate'].apply(split_hours)
-        df_daily['ore_regolari'] = split_data.apply(lambda x: x['regular'])
-        df_daily['ore_straordinario'] = split_data.apply(lambda x: x['overtime'])
 
         df_daily = df_daily.round(2)
 
@@ -162,9 +161,9 @@ df_filtered = st.session_state.get('filtered_timesheet', pd.DataFrame())
 df_aggregated = st.session_state.get('aggregated_timesheet', pd.DataFrame())
 
 # --- Riepilogo Straordinari ---
-with st.expander("🗓️ Riepilogo Straordinari Giornaliero", expanded=True):
+with st.expander("🗓️ Riepilogo Ore Giornaliero", expanded=True):
     if df_aggregated is not None and not df_aggregated.empty:
-        display_agg_columns = ['data', 'operaio', 'ore_lavorate', 'ore_regolari', 'ore_straordinario']
+        display_agg_columns = ['data', 'operaio', 'ore_lavorate', 'ore_regolari', 'ore_straordinario', 'ore_assenza']
         st.dataframe(df_aggregated[display_agg_columns], use_container_width=True)
     else:
         st.info("Nessun dato aggregato da visualizzare.")
@@ -190,11 +189,13 @@ if df_aggregated is not None and not df_aggregated.empty:
     total_worked = df_aggregated['ore_lavorate'].sum()
     total_regular = df_aggregated['ore_regolari'].sum()
     total_overtime = df_aggregated['ore_straordinario'].sum()
+    total_absence = df_aggregated['ore_assenza'].sum()
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("📈 Totale Ore Lavorate", f"{total_worked:,.2f}")
     col2.metric("🕒 Ore Regolari", f"{total_regular:,.2f}")
     col3.metric("🚀 Ore Straordinario", f"{total_overtime:,.2f}")
+    col4.metric("📉 Ore Assenza", f"{total_absence:,.2f}")
 
 st.divider()
 
