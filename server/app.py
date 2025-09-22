@@ -17,6 +17,7 @@ from tools.extractors import (
     extract_fields_with_ai
 )
 from core.chat_logic import get_ai_response
+from core.logic import split_hours
 
 # Configurazione della pagina Streamlit
 st.set_page_config(
@@ -75,6 +76,7 @@ def refresh_filtered_data(filters=None):
     """Esegue una query con i filtri forniti e aggiorna lo stato della sessione."""
     if filters is None:
         filters = {}
+
     results = db_manager.timesheet_query(
         date_from=filters.get('date_from'),
         date_to=filters.get('date_to'),
@@ -84,8 +86,22 @@ def refresh_filtered_data(filters=None):
     )
 
     df = pd.DataFrame(results) if results else pd.DataFrame()
-
     st.session_state['filtered_timesheet'] = df
+
+    if not df.empty:
+        df_daily = df.groupby(['data', 'operaio']).agg(
+            ore_lavorate=('ore_lavorate', 'sum')
+        ).reset_index()
+
+        split_data = df_daily['ore_lavorate'].apply(split_hours)
+        df_daily['ore_regolari'] = split_data.apply(lambda x: x['regular'])
+        df_daily['ore_straordinario'] = split_data.apply(lambda x: x['overtime'])
+
+        df_daily = df_daily.round(2)
+
+        st.session_state['aggregated_timesheet'] = df_daily
+    else:
+        st.session_state['aggregated_timesheet'] = pd.DataFrame()
 
 
 # --- SIDEBAR ---
@@ -143,21 +159,42 @@ if 'filtered_timesheet' not in st.session_state:
     refresh_filtered_data()
 
 df_filtered = st.session_state.get('filtered_timesheet', pd.DataFrame())
+df_aggregated = st.session_state.get('aggregated_timesheet', pd.DataFrame())
 
+# --- Riepilogo Straordinari ---
+with st.expander("🗓️ Riepilogo Straordinari Giornaliero", expanded=True):
+    if df_aggregated is not None and not df_aggregated.empty:
+        display_agg_columns = ['data', 'operaio', 'ore_lavorate', 'ore_regolari', 'ore_straordinario']
+        st.dataframe(df_aggregated[display_agg_columns], use_container_width=True)
+    else:
+        st.info("Nessun dato aggregato da visualizzare.")
+
+st.divider()
+
+# --- Dettaglio Righe Timesheet ---
+st.subheader("Dettaglio Attività")
 if not df_filtered.empty:
-    # Definiamo l'ordine desiderato delle colonne per la visualizzazione
     display_columns = [
-        'data', 'operaio', 'commessa', 'orario_ingresso', 'orario_uscita', 'ore_lavorate', 'reparto', 'descrizione'
+        'data', 'operaio', 'commessa', 'reparto', 'orario_ingresso', 'orario_uscita', 'durata_pausa_ore', 'ore_lavorate', 'descrizione'
     ]
-    # Rimuoviamo le colonne non desiderate e riordiniamo
-    df_display = df_filtered[display_columns].copy()
-
+    df_display = df_filtered[[col for col in display_columns if col in df_filtered.columns]].copy()
     st.dataframe(df_display, use_container_width=True)
-
-    total_hours = df_filtered['ore_lavorate'].sum()
-    st.metric("📈 Totale Ore Filtrate", f"{total_hours:,.2f} ore")
 else:
-    st.info("Nessun dato da visualizzare. Carica un rapportino o prova a cambiare i filtri.")
+    st.info("Nessun dato dettagliato da visualizzare. Carica un rapportino o prova a cambiare i filtri.")
+
+st.divider()
+
+# --- Metriche Totali ---
+st.subheader("Metriche Totali del Periodo Filtrato")
+if df_aggregated is not None and not df_aggregated.empty:
+    total_worked = df_aggregated['ore_lavorate'].sum()
+    total_regular = df_aggregated['ore_regolari'].sum()
+    total_overtime = df_aggregated['ore_straordinario'].sum()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("📈 Totale Ore Lavorate", f"{total_worked:,.2f}")
+    col2.metric("🕒 Ore Regolari", f"{total_regular:,.2f}")
+    col3.metric("🚀 Ore Straordinario", f"{total_overtime:,.2f}")
 
 st.divider()
 
