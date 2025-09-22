@@ -17,7 +17,6 @@ from tools.extractors import (
     extract_fields_with_ai
 )
 from core.chat_logic import get_ai_response
-from core.logic import calculate_worked_hours
 
 # Configurazione della pagina Streamlit
 st.set_page_config(
@@ -85,13 +84,6 @@ def refresh_filtered_data(filters=None):
     )
 
     df = pd.DataFrame(results) if results else pd.DataFrame()
-
-    if not df.empty:
-        # Applichiamo la logica di calcolo delle ore
-        df['ore_lavorate'] = df.apply(
-            lambda row: calculate_worked_hours(row['orario_ingresso'], row['orario_uscita']),
-            axis=1
-        )
 
     st.session_state['filtered_timesheet'] = df
 

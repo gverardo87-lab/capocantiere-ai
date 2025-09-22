@@ -10,6 +10,8 @@ import streamlit as st
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.config import DB_PATH
+from core.logic import calculate_worked_hours
+
 
 @st.cache_resource
 def get_db_connection(db_path: str) -> sqlite3.Connection:
@@ -149,7 +151,18 @@ class Database:
         if reparti: sql += f" AND t.reparto IN ({','.join('?' for _ in reparti)})"; params.extend(reparti)
         sql += " ORDER BY t.data ASC, t.id ASC"
         rows = self._query(sql, params)
-        return [dict(r) for r in rows]
+
+        # Trasforma le righe in dizionari e calcola le ore lavorate
+        results = []
+        for r in rows:
+            record = dict(r)
+            record['ore_lavorate'] = calculate_worked_hours(
+                start_time=record.get('orario_ingresso'),
+                end_time=record.get('orario_uscita')
+            )
+            results.append(record)
+
+        return results
 
     def delete_all_data(self):
         with self.conn:
