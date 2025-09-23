@@ -1,4 +1,4 @@
-# core/knowledge_chain.py (Versione con Logica "Refine")
+# core/knowledge_chain.py (Versione Corretta e Robusta)
 
 import os
 import sys
@@ -25,71 +25,71 @@ def get_knowledge_chain():
     if not os.path.exists(VECTORSTORE_DIR):
         st.warning(f"Database della conoscenza non trovato. Esegui 'knowledge_base/ingest.py' per crearlo.")
         return None, None
-
-    embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
-    vectorstore = Chroma(persist_directory=VECTORSTORE_DIR, embedding_function=embeddings)
-    llm = OllamaLLM(model=MAIN_LLM_MODEL)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5}) # Aumentiamo a 5 per avere più contesto
-    print("--- Knowledge Chain caricata con successo. ---")
-    return retriever, llm
+    try:
+        embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+        vectorstore = Chroma(persist_directory=VECTORSTORE_DIR, embedding_function=embeddings)
+        llm = OllamaLLM(model=MAIN_LLM_MODEL)
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+        print("--- Knowledge Chain caricata con successo. ---")
+        return retriever, llm
+    except Exception as e:
+        st.error(f"Errore durante l'inizializzazione della Knowledge Chain: {e}")
+        return None, None
 
 def get_expert_response(user_query: str) -> Dict[str, Any]:
-    """
-    MODIFICATO: Ora la funzione usa una catena di "Refine" per risposte più complete.
-    """
     retriever, llm = get_knowledge_chain()
-    
     error_response = {"answer": "Errore: La base di conoscenza non è stata caricata.", "sources": []}
-    if retriever is None or llm is None: return error_response
+    if retriever is None or llm is None:
+        return error_response
+    try:
+        docs = retriever.invoke(user_query)
+    except Exception as e:
+        return {"answer": f"Errore durante la ricerca nella base di conoscenza: {e}", "sources": []}
+    if not docs:
+        return {"answer": "Non ho trovato informazioni pertinenti.", "sources": []}
 
-    # Step 1: Recupero dei documenti (come prima)
-    docs = retriever.invoke(user_query)
-    if not docs: return {"answer": "Non ho trovato informazioni pertinenti.", "sources": []}
-
-    # Estraiamo le fonti per mostrarle all'utente
     sources = []
     unique_sources = set()
     for doc in docs:
-        source_id = f"{doc.metadata['source']}, pag. {doc.metadata['page']}"
+        source_name = doc.metadata.get('source', 'Fonte Sconosciuta')
+        page_num = doc.metadata.get('page', '?')
+        source_id = f"{source_name}, pag. {page_num}"
         if source_id not in unique_sources:
             unique_sources.add(source_id)
-            sources.append({"source": doc.metadata['source'], "page": doc.metadata['page']})
+            sources.append({"source": source_name, "page": page_num})
 
-    # --- NUOVA LOGICA "REFINE" ---
-    
-    # Step 2a: Creiamo una bozza di risposta usando solo il primo documento
-    initial_context = docs[0].page_content
-    initial_prompt = f"""
-    CONTESTO:
-    {initial_context}
-    ---
-    DOMANDA: {user_query}
-    ---
-    Basandoti ESCLUSIVAMENTE sul contesto fornito, fornisci una risposta iniziale e dettagliata.
-    RISPOSTA INIZIALE:
-    """
-    print("--- Genero la risposta iniziale... ---")
-    intermediate_answer = llm.invoke(initial_prompt)
+    context = "\n\n---\n\n".join([doc.page_content for doc in docs])
 
-    # Step 2b: Cicliamo sui documenti rimanenti per "raffinare" la risposta
-    for i, doc in enumerate(docs[1:]):
-        print(f"--- Ciclo di raffinamento {i+1}/{len(docs)-1}... ---")
-        refine_context = doc.page_content
-        refine_prompt = f"""
-        RISPOSTA ESISTENTE:
-        {intermediate_answer}
+    # La logica "Refine" rimane invariata
+    try:
+        initial_context = docs[0].page_content
+        initial_prompt = f"""
+        CONTESTO:
+        {initial_context}
         ---
-        NUOVE INFORMAZIONI DAL CONTESTO AGGIUNTIVO:
-        {refine_context}
+        DOMANDA: {user_query}
         ---
-        Basandoti sulla risposta esistente e sulle nuove informazioni, perfezionala e arricchiscila.
-        Se le nuove informazioni contraddicono o non aggiungono nulla di rilevante, mantieni la risposta esistente.
-        Collega le informazioni in modo logico e coerente.
-        RISPOSTA RAFFINATA:
+        Basandoti ESCLUSIVAMENTE sul contesto fornito, fornisci una risposta iniziale e dettagliata.
+        RISPOSTA INIZIALE:
         """
-        intermediate_answer = llm.invoke(refine_prompt)
+        intermediate_answer = llm.invoke(initial_prompt)
 
-    # La risposta finale è l'ultima risposta raffinata
-    final_answer = intermediate_answer
-    
+        for i, doc in enumerate(docs[1:]):
+            refine_context = doc.page_content
+            refine_prompt = f"""
+            RISPOSTA ESISTENTE:
+            {intermediate_answer}
+            ---
+            NUOVE INFORMAZIONI DAL CONTESTO AGGIUNTIVO:
+            {refine_context}
+            ---
+            Basandoti sulla risposta esistente e sulle nuove informazioni, perfezionala e arricchiscila.
+            Se le nuove informazioni non aggiungono nulla di rilevante, mantieni la risposta esistente.
+            Collega le informazioni in modo logico e coerente.
+            RISPOSTA RAFFINATA:
+            """
+            intermediate_answer = llm.invoke(refine_prompt)
+        final_answer = intermediate_answer
+    except Exception as e:
+        return {"answer": f"Errore durante la generazione della risposta: {e}", "sources": sources}
     return {"answer": final_answer, "sources": sources}
