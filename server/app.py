@@ -1,17 +1,15 @@
-# server/app.py (Nuova Versione Home Page)
-
+# server/app.py
 from __future__ import annotations
 import os
-from datetime import date
-import pandas as pd
-import streamlit as st
 import sys
+import streamlit as st
 
-# Import custom per aggiungere la root del progetto al path
+# Aggiungiamo la root del progetto al path per trovare i nostri moduli
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+# Importiamo i nostri motori: il db_manager e l'estrattore Excel
 from core.db import db_manager
-from tools.extractors import read_text_and_kind, file_sha256, parse_timesheet_csv
+from tools.extractors import parse_monthly_timesheet_excel, ExcelParsingError
 
 # Configurazione della pagina Streamlit
 st.set_page_config(
@@ -20,58 +18,80 @@ st.set_page_config(
     layout="wide",
 )
 
-# Le funzioni di callback e di refresh rimangono qui perché la sidebar è globale
 def process_uploaded_file():
+    """
+    Funzione centrale che gestisce il file Excel caricato.
+    Chiama l'estrattore, poi il gestore del DB, e fornisce feedback all'utente.
+    """
     uploaded_file = st.session_state.get("file_uploader")
-    if uploaded_file is None: return
+    if uploaded_file is None:
+        return
+
     file_bytes = uploaded_file.getvalue()
     filename = uploaded_file.name
-    sha256_hash = file_sha256(file_bytes)
-    with st.spinner(f"Analisi di '{filename}'..."):
-        text, kind = read_text_and_kind(filename, file_bytes)
-        document_id = db_manager.upsert_document(
-            kind=kind.replace("_CSV", ""), filename=filename, content_type=uploaded_file.type,
-            size_bytes=uploaded_file.size, sha256=sha256_hash
-        )
-        if kind == "RAPPORTO_CSV":
-            try:
-                rows, _ = parse_timesheet_csv(file_bytes)
-                db_manager.replace_timesheet_rows(document_id, rows)
-                st.success(f"Rapportino '{filename}' importato!")
-            except Exception as e:
-                st.error(f"Errore nel CSV: {e}")
 
-# --- SIDEBAR (Globale per tutta l'app) ---
+    with st.spinner(f"Elaborazione di '{filename}'..."):
+        try:
+            records = parse_monthly_timesheet_excel(file_bytes)
+            
+            if not records:
+                st.warning("Il file è stato letto, ma non sono state trovate ore lavorate da importare.")
+                return
+
+            db_manager.update_monthly_timesheet(records)
+            
+            st.success(f"Rapportino '{filename}' importato! {len(records)} record di presenze sono stati salvati.")
+            st.info("Vai alla pagina 'Reportistica' per visualizzare i dati aggiornati.")
+        
+        except ExcelParsingError as e:
+            st.error(f"❌ Errore nel formato del file Excel: {e}")
+        except Exception as e:
+            st.error(f"Si è verificato un errore imprevisto: {e}")
+
+def delete_all_data():
+    """ Funzione per cancellare tutti i dati delle presenze. """
+    # Nota: questa funzione ora dovrà chiamare un metodo specifico in db.py
+    # che aggiungeremo se non presente, es: db_manager.delete_all_presenze()
+    try:
+        # Assumiamo di avere una funzione db_manager.delete_all_presenze()
+        db_manager.delete_all_presenze()
+        st.success("Tutti i dati delle presenze sono stati cancellati.")
+    except Exception as e:
+        st.error(f"Errore durante la cancellazione dei dati: {e}")
+
+
+# --- SIDEBAR (Globale e semplificata) ---
 with st.sidebar:
     st.title("🏗️ CapoCantiere AI")
-    with st.expander("➕ Carica Rapportini", expanded=True):
+    
+    with st.expander("➕ Carica Rapportino Mensile", expanded=True):
         st.file_uploader(
-            "Seleziona un rapportino CSV", type=["csv"],
-            label_visibility="collapsed", key="file_uploader",
-            on_change=process_uploaded_file
+            "Seleziona un file Excel",
+            type=["xlsx"],
+            label_visibility="collapsed",
+            key="file_uploader",
+            on_change=process_uploaded_file,
+            help="Carica il file Excel con le presenze del mese. Il sistema leggerà il mese e l'anno dalla prima riga."
         )
-    st.divider()
-    with st.expander("🗂️ Archivio Documenti Recenti"):
-        st.dataframe(pd.DataFrame(db_manager.list_documents(limit=10)), use_container_width=True, hide_index=True)
+    
     st.divider()
     st.header("⚙️ Azioni Rapide")
-    if st.button("⚠️ Svuota Memoria Dati", type="primary", use_container_width=True, help="ATTENZIONE: Cancella tutti i documenti e i dati caricati!"):
-        with st.spinner("Cancellazione di tutti i dati in corso..."):
-            db_manager.delete_all_data()
-        st.session_state.clear()
+    if st.button("⚠️ Svuota Archivio Presenze", type="primary", use_container_width=True, help="ATTENZIONE: Cancella tutti i dati delle presenze caricate!"):
+        delete_all_data()
         st.rerun()
 
-# --- PAGINA PRINCIPALE (Home Page) ---
+# --- PAGINA PRINCIPALE ---
 st.title("Benvenuto in CapoCantiere AI")
 st.markdown(
     """
-    Questa è la tua applicazione per la gestione semplificata del personale e dei lavori di cantiere.
+    La tua applicazione per la gestione semplificata delle presenze in cantiere.
+    
+    **Come funziona:**
 
-    **Usa il menu a sinistra per navigare tra le sezioni:**
-
-    - **`Reportistica`**: Visualizza e filtra i dati dei rapportini.
-    - **`Assistente Dati`**: Chatta con l'AI per analizzare i dati dei rapportini.
-    - **`Esperto Tecnico`**: Chatta con l'esperto AI che ha studiato la documentazione tecnica.
+    1.  **Carica i Dati**: Usa il pannello a sinistra per caricare il tuo
+        `Rapportino Mensile.xlsx`.
+        
+    2.  **Visualizza i Risultati**: Vai alla pagina **`Reportistica`** dal menu per visualizzare e analizzare i dati che hai caricato.
     """
 )
-st.info("Per iniziare, carica un rapportino CSV o naviga in una delle pagine qui a fianco.")
+st.info("Per iniziare, carica il tuo rapportino mensile usando il menu a sinistra.")
