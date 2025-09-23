@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import sys
 import os
-# Import custom per aggiungere la root del progetto al path, come da tua correzione
+# Import custom per aggiungere la root del progetto al path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import pandas as pd
 from ollama import Client
@@ -13,38 +13,41 @@ from core.db import db_manager
 
 def get_ai_response(chat_history: list[dict]) -> str:
     """
-    Logica avanzata per la chat:
-    1. L'AI interpreta la domanda dell'utente per capire quali filtri applicare.
-    2. Esegue una query mirata al database con quei filtri.
-    3. L'AI genera una risposta in linguaggio naturale basata sui risultati della query.
+    Logica di chat basata su un'unica fonte di verità per i calcoli.
+    1. L'AI interpreta la domanda con contesto per definire i filtri di query.
+    2. Il database esegue la query e restituisce dati GIÀ CALCOLATI.
+    3. Il codice Python AGGREGA questi dati corretti usando Pandas.
+    4. L'AI usa il riepilogo aggregato per formulare una risposta in linguaggio naturale.
     """
-    print("--- Avvio logica chat AVANZATA ---")
+    print("--- Avvio logica chat con Single Source of Truth ---")
     client = Client()
     user_query = chat_history[-1]["content"]
 
-    # --- FASE 1: RICONOSCIMENTO DELL'INTENTO E DEI PARAMETRI ---
-    # Chiediamo all'AI di trasformare la domanda in un JSON che possiamo usare per la query
-    
-    # Prendiamo la lista degli operai e delle commesse esistenti dal DB per aiutare l'AI
+    # --- FASE 1: RICONOSCIMENTO DELL'INTENTO (con memoria) ---
     distincts = db_manager.timesheet_distincts()
     operai_disponibili = distincts.get('operaio', [])
     commesse_disponibili = distincts.get('commessa', [])
 
+    context_history = ""
+    if len(chat_history) > 2:
+        last_user_question = chat_history[-3]['content']
+        last_ai_answer = chat_history[-2]['content']
+        context_history = f"""
+        Contesto dell'ultima interazione:
+        - Domanda precedente: "{last_user_question}"
+        - Tua risposta precedente: "{last_ai_answer}"
+        ---
+        """
+
     intent_prompt = f"""
-    Analizza la domanda dell'utente e trasformala in un JSON per interrogare un database.
-    I campi possibili per il JSON sono: "operai" (una lista di nomi), "commesse" (una lista di nomi).
-    Se l'utente non specifica un filtro, ometti la chiave dal JSON.
+    Analizza la NUOVA domanda dell'utente, usando il contesto se necessario, e trasformala in un JSON per filtrare un database.
+    {context_history}
+    I campi JSON possibili sono "operai" (lista di nomi) e "commesse" (lista di nomi). Ometti le chiavi non specificate.
 
-    Lista di operai conosciuti: {operai_disponibili}
-    Lista di commesse conosciute: {commesse_disponibili}
+    Operai conosciuti: {operai_disponibili}
+    Commesse conosciute: {commesse_disponibili}
 
-    Esempi:
-    - Domanda: "ore totali di Rossi Luca" -> {{"operai": ["Rossi Luca"]}}
-    - Domanda: "quanto si è lavorato sulla commessa 24-015?" -> {{"commesse": ["24-015"]}}
-    - Domanda: "ore di Bianchi Marco sulla commessa 24-015" -> {{"operai": ["Bianchi Marco"], "commesse": ["24-015"]}}
-    - Domanda: "riepilogo generale" -> {{}}
-
-    Domanda dell'utente da analizzare: "{user_query}"
+    NUOVA Domanda: "{user_query}"
     """
     
     try:
@@ -61,36 +64,58 @@ def get_ai_response(chat_history: list[dict]) -> str:
         print(f"ERRORE nella fase di intent recognition: {e}")
         return "Mi dispiace, non sono riuscito a capire la tua domanda. Prova a riformularla."
 
-    # --- FASE 2: ESECUZIONE DELLA QUERY SUL DATABASE ---
+    # --- FASE 2: RECUPERO DATI E AGGREGAZIONE SICURA ---
     try:
-        # Usiamo i parametri estratti dall'AI per chiamare la nostra funzione esistente
+        # Chiamiamo la nostra unica fonte di verità per i dati calcolati
         results = db_manager.timesheet_query(
             operai=query_params.get("operai"),
             commesse=query_params.get("commesse")
         )
-        df = pd.DataFrame(results) if results else pd.DataFrame()
         
-        context_data = "Non ho trovato dati corrispondenti ai filtri richiesti."
-        if not df.empty:
-            context_data = df.to_string() # Diamo all'AI i dati grezzi in formato testo
+        if not results:
+            context_data = "Non ho trovato dati che corrispondono alla tua richiesta."
+        else:
+            df = pd.DataFrame(results)
+            
+            # --- AGGREGAZIONE 100% PRECISA CON PANDAS ---
+            total_worked_hours = df['ore_lavorate'].sum()
+            
+            summary = {
+                "totale_record": len(df),
+                "ore_lavorate_totali": round(total_worked_hours, 2),
+                "ore_regolari_totali": round(df['ore_regolari'].sum(), 2),
+                "ore_straordinario_totali": round(df['ore_straordinario'].sum(), 2),
+                "dettaglio_per_operaio": None,
+                "dettaglio_per_commessa": None
+            }
+
+            # Raggruppiamo solo se ha senso farlo
+            if df['operaio'].nunique() > 1 and not query_params.get("operai"):
+                summary["dettaglio_per_operaio"] = df.groupby('operaio')['ore_lavorate'].sum().round(2).to_dict()
+            
+            if df['commessa'].nunique() > 1 and not query_params.get("commesse"):
+                summary["dettaglio_per_commessa"] = df.groupby('commessa')['ore_lavorate'].sum().round(2).to_dict()
+
+            # Convertiamo il riepilogo in una stringa JSON pulita per l'AI
+            context_data = json.dumps(summary, indent=2, ensure_ascii=False)
 
     except Exception as e:
-        print(f"ERRORE nella fase di query al DB: {e}")
-        return "Ho avuto un problema a interrogare il database."
+        print(f"ERRORE nella fase di query e aggregazione: {e}")
+        return "Ho avuto un problema a recuperare e aggregare i dati."
 
     # --- FASE 3: GENERAZIONE DELLA RISPOSTA FINALE ---
     response_prompt = f"""
-    Sei "CapoCantiere AI", un assistente virtuale.
-    Rispondi alla domanda originale dell'utente in modo chiaro e conciso, usando i dati che ti fornisco.
+    Sei "CapoCantiere AI". Il tuo unico compito è presentare in modo chiaro e in italiano i dati numerici di un riepilogo JSON che ti viene fornito.
+    NON DEVI FARE CALCOLI. Devi solo leggere e riportare i numeri dal JSON.
 
-    Dati estratti dal database:
+    Dati da presentare (in formato JSON):
     ---
     {context_data}
     ---
 
-    Domanda originale dell'utente: "{user_query}"
+    Domanda originale dell'utente a cui stai rispondendo: "{user_query}"
 
-    Formula la tua risposta finale.
+    Formula la tua risposta finale in modo naturale e conciso.
     """
 
     try:
@@ -101,4 +126,4 @@ def get_ai_response(chat_history: list[dict]) -> str:
         return final_response['message']['content']
     except Exception as e:
         print(f"ERRORE nella fase di generazione risposta: {e}")
-        return "Ho trovato i dati ma ho avuto un problema a formulare la risposta."
+        return "Ho aggregato i dati, ma ho avuto un problema a formulare la risposta."
