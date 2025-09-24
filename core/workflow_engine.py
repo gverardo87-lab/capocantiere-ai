@@ -17,12 +17,7 @@ class WorkRole(Enum):
     AIUTANTE_CARPENTIERE = "Aiutante Carpentiere"
     SALDATORE = "Saldatore"
     MOLATORE = "Molatore"
-    VERNICIATORE = "Verniciatore"
-    ELETTRICISTA = "Elettricista"
-    TUBISTA = "Tubista"
-    MECCANICO = "Meccanico"
-    MONTATORE = "Montatore"
-    FABBRICATORE = "Fabbricatore"
+    CAPOCANTIERE = "Capocantiere"
     
     @classmethod
     def from_string(cls, role_str: str) -> Optional['WorkRole']:
@@ -114,101 +109,86 @@ class NavalWorkflowEngine:
     def _initialize_default_templates(self):
         """Inizializza i template di workflow standard per il cantiere navale."""
         
-        # WORKFLOW MONTAGGIO SCAFO (MON)
+        # WORKFLOW MONTAGGIO SCAFO (MON) - Semplificato e Ricalibrato
         self.templates["MON"] = WorkflowTemplate(
             name="Montaggio Scafo",
             activity_type="MON",
-            description="Workflow standard per attività di montaggio scafo",
+            description="Workflow semplificato fino alla molatura, con fase di consegna.",
             phases=[
                 WorkPhase(
                     role=WorkRole.CARPENTIERE,
                     start_percentage=0,
-                    end_percentage=50,
+                    end_percentage=52.9,  # Scalato a 90%
                     can_parallel=True,
                     requires_roles=[WorkRole.AIUTANTE_CARPENTIERE]
                 ),
                 WorkPhase(
                     role=WorkRole.AIUTANTE_CARPENTIERE,
                     start_percentage=0,
-                    end_percentage=50,
+                    end_percentage=52.9,  # Scalato a 90%
                     can_parallel=True
                 ),
                 WorkPhase(
                     role=WorkRole.SALDATORE,
-                    start_percentage=25,  # Può iniziare prima che il carpentiere finisca
-                    end_percentage=75,
+                    start_percentage=26.5,  # Scalato a 90%
+                    end_percentage=79.4,  # Scalato a 90%
                     can_parallel=False
                 ),
                 WorkPhase(
                     role=WorkRole.MOLATORE,
-                    start_percentage=50,  # Inizia mentre il saldatore sta ancora lavorando
-                    end_percentage=85,
+                    start_percentage=52.9,  # Scalato a 90%
+                    end_percentage=90,    # Scalato a 90%
                     can_parallel=False
                 ),
                 WorkPhase(
-                    role=WorkRole.VERNICIATORE,
-                    start_percentage=75,
+                    role=WorkRole.CAPOCANTIERE,
+                    start_percentage=90,
                     end_percentage=100,
                     can_parallel=False
                 )
             ]
         )
         
-        # WORKFLOW FUORI APPARATO MOTORE (FAM)
+        # WORKFLOW FUORI APPARATO MOTORE (FAM) - Semplificato e Ricalibrato
         self.templates["FAM"] = WorkflowTemplate(
             name="Fuori Apparato Motore",
             activity_type="FAM",
-            description="Workflow per lavorazioni fuori apparato motore",
+            description="Workflow FAM semplificato con collaudo e consegna.",
             phases=[
                 WorkPhase(
-                    role=WorkRole.FABBRICATORE,
-                    start_percentage=0,
-                    end_percentage=40,
-                    can_parallel=False
-                ),
-                WorkPhase(
                     role=WorkRole.CARPENTIERE,
-                    start_percentage=30,
-                    end_percentage=60,
+                    start_percentage=0,
+                    end_percentage=47.1,  # Scalato a 80%
                     can_parallel=True,
                     requires_roles=[WorkRole.AIUTANTE_CARPENTIERE]
                 ),
                 WorkPhase(
                     role=WorkRole.AIUTANTE_CARPENTIERE,
-                    start_percentage=30,
-                    end_percentage=60,
+                    start_percentage=0,
+                    end_percentage=47.1,  # Scalato a 80%
                     can_parallel=True
                 ),
                 WorkPhase(
                     role=WorkRole.SALDATORE,
-                    start_percentage=40,
-                    end_percentage=80,
+                    start_percentage=23.5,  # Scalato a 80%
+                    end_percentage=70.6,  # Scalato a 80%
                     can_parallel=False
                 ),
                 WorkPhase(
                     role=WorkRole.MOLATORE,
-                    start_percentage=60,
+                    start_percentage=47.1,  # Scalato a 80%
+                    end_percentage=80,    # Scalato a 80%
+                    can_parallel=False
+                ),
+                WorkPhase(
+                    role=WorkRole.CAPOCANTIERE,
+                    start_percentage=80,
                     end_percentage=90,
                     can_parallel=False
                 ),
                 WorkPhase(
-                    role=WorkRole.VERNICIATORE,
-                    start_percentage=80,
-                    end_percentage=100,
-                    can_parallel=False
-                )
-            ]
-        )
-        
-        # WORKFLOW ELETTRICO (ELE)
-        self.templates["ELE"] = WorkflowTemplate(
-            name="Impianti Elettrici",
-            activity_type="ELE",
-            description="Workflow per impianti elettrici",
-            phases=[
-                WorkPhase(
-                    role=WorkRole.ELETTRICISTA,
-                    start_percentage=0,
+                    role=WorkRole.CAPOCANTIERE,
+                    start_percentage=90,
                     end_percentage=100,
                     can_parallel=False
                 )
