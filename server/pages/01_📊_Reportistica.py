@@ -1,80 +1,112 @@
 # server/pages/01_📊_Reportistica.py
 from __future__ import annotations
 import os
-from datetime import date
+import sys
+from datetime import datetime
 import pandas as pd
 import streamlit as st
-import sys
 
+# Aggiungiamo la root del progetto al path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
 from core.db import db_manager
 
-st.set_page_config(page_title="Reportistica", page_icon="📊", layout="wide")
+# Configurazione della pagina
+st.set_page_config(page_title="Reportistica Presenze", page_icon="📊", layout="wide")
 
-st.title("📊 Reportistica Ore")
-st.markdown("Visualizza, filtra e analizza i dati dei rapportini caricati.")
+st.title("📊 Reportistica Presenze Mensile")
+st.markdown("Visualizza e analizza i dati aggregati dei rapportini mensili caricati.")
 
-def refresh_filtered_data(filters=None):
-    if filters is None: filters = {}
-    results = db_manager.timesheet_query(
-        date_from=filters.get('date_from'), date_to=filters.get('date_to'),
-        operai=filters.get('operai'), commesse=filters.get('commesse'),
-        reparti=filters.get('reparti')
+# --- SELEZIONE DEL PERIODO ---
+st.subheader("1. Seleziona il periodo da analizzare")
+
+current_year = datetime.now().year
+current_month = datetime.now().month
+
+col1, col2, col3 = st.columns([1, 1, 2])
+with col1:
+    selected_year = st.number_input("Anno", min_value=2020, max_value=current_year + 5, value=current_year)
+with col2:
+    selected_month = st.selectbox(
+        "Mese",
+        options=range(1, 13),
+        format_func=lambda month: datetime(current_year, month, 1).strftime("%B"),
+        index=current_month - 1
     )
-    df = pd.DataFrame(results) if results else pd.DataFrame()
-    st.session_state['filtered_timesheet'] = df
-    if not df.empty and all(col in df.columns for col in ['ore_lavorate', 'ore_regolari', 'ore_straordinario', 'ore_assenza']):
-        df_daily = df.groupby(['data', 'operaio']).agg(
-            ore_lavorate=('ore_lavorate', 'sum'), ore_regolari=('ore_regolari', 'sum'),
-            ore_straordinario=('ore_straordinario', 'sum'), ore_assenza=('ore_assenza', 'sum')
-        ).reset_index().round(2)
-        st.session_state['aggregated_timesheet'] = df_daily
+
+# Quando il bottone viene premuto, carichiamo i dati e li salviamo nella sessione
+if st.button("Mostra Report", type="primary"):
+    results = db_manager.get_presence_data(year=selected_year, month=selected_month)
+    if not results:
+        st.warning(f"Nessun dato trovato per {datetime(selected_year, selected_month, 1).strftime('%B %Y')}.")
+        st.session_state['report_data'] = None # Pulisce i dati vecchi
     else:
-        st.session_state['aggregated_timesheet'] = pd.DataFrame()
+        df = pd.DataFrame(results)
+        df['data'] = pd.to_datetime(df['data']).dt.date
+        st.session_state['report_data'] = df # SALVIAMO I DATI IN MEMORIA
+        st.session_state['report_period'] = f"{datetime(selected_year, selected_month, 1).strftime('%B %Y')}"
 
-with st.expander("🔍 Filtra Dati", expanded=True):
-    distincts = db_manager.timesheet_distincts()
-    col1, col2 = st.columns(2)
-    with col1:
-        date_from = st.date_input("Da data", value=None)
-        selected_operai = st.multiselect("Filtra per Operai", options=distincts.get('operaio', []))
-    with col2:
-        date_to = st.date_input("A data", value=None)
-        selected_commesse = st.multiselect("Filtra per Commesse", options=distincts.get('commessa', []))
-    selected_reparti = st.multiselect("Filtra per Reparti", options=distincts.get('reparto', []))
-    if st.button("Esegui Filtro", type="primary"):
-        filters = {
-            "date_from": date_from.strftime('%Y-%m-%d') if date_from else None,
-            "date_to": date_to.strftime('%Y-%m-%d') if date_to else None,
-            "operai": selected_operai or None, "commesse": selected_commesse or None,
-            "reparti": selected_reparti or None
-        }
-        refresh_filtered_data(filters)
+# --- VISUALIZZAZIONE E FILTRAGGIO (ORA FUORI DAL BOTTONE) ---
+# Controlliamo se ci sono dati in memoria da mostrare
+if 'report_data' in st.session_state and st.session_state['report_data'] is not None:
+    df_original = st.session_state['report_data']
+    
+    st.divider()
+    st.subheader("2. Applica filtri (opzionale)")
 
-if 'filtered_timesheet' not in st.session_state:
-    refresh_filtered_data()
+    # --- FILTRI AGGIUNTIVI ---
+    fcol1, fcol2 = st.columns(2)
+    with fcol1:
+        operai_disponibili = sorted(df_original['operaio'].unique())
+        selected_operai = st.multiselect("Filtra per Operaio", options=operai_disponibili)
+    with fcol2:
+        min_date = df_original['data'].min()
+        max_date = df_original['data'].max()
+        selected_date_range = st.date_input(
+            "Filtra per intervallo di giorni",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
 
-df_filtered = st.session_state.get('filtered_timesheet', pd.DataFrame())
-df_aggregated = st.session_state.get('aggregated_timesheet', pd.DataFrame())
+    # --- APPLICAZIONE DEI FILTRI ---
+    df_filtered = df_original.copy()
+    if selected_operai:
+        df_filtered = df_filtered[df_filtered['operaio'].isin(selected_operai)]
+    if selected_date_range and len(selected_date_range) == 2:
+        start_date, end_date = selected_date_range
+        df_filtered = df_filtered[(df_filtered['data'] >= start_date) & (df_filtered['data'] <= end_date)]
 
-st.subheader("🗓️ Riepilogo Ore Giornaliero")
-if not df_aggregated.empty:
-    st.dataframe(df_aggregated, use_container_width=True)
-else:
-    st.info("Nessun dato aggregato. Filtra i dati per generare il riepilogo.")
-st.divider()
+    st.divider()
+    st.header(f"Riepilogo per {st.session_state['report_period']}")
+    
+    # --- METRICHE TOTALI ---
+    total_worked = df_filtered['ore_lavorate'].sum()
+    total_regular = df_filtered['ore_regolari'].sum()
+    total_overtime = df_filtered['ore_straordinario'].sum()
+    total_absence = df_filtered['ore_assenza'].sum()
 
-st.subheader("Dettaglio Attività")
-if not df_filtered.empty:
-    st.dataframe(df_filtered, use_container_width=True)
-else:
-    st.info("Nessun dato dettagliato. Carica un rapportino o applica un filtro.")
-st.divider()
+    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+    mcol1.metric("📈 Totale Ore Lavorate", f"{total_worked:,.2f}")
+    mcol2.metric("🕒 Ore Regolari", f"{total_regular:,.2f}")
+    mcol3.metric("🚀 Ore Straordinario", f"{total_overtime:,.2f}")
+    mcol4.metric("📉 Ore Assenza", f"{total_absence:,.2f}")
+    
+    st.divider()
 
-st.subheader("Metriche Totali del Periodo Filtrato")
-if not df_aggregated.empty:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("📈 Totale Ore Lavorate", f"{df_aggregated['ore_lavorate'].sum():,.2f}")
-    col2.metric("🕒 Ore Regolari", f"{df_aggregated['ore_regolari'].sum():,.2f}")
-    col3.metric("🚀 Ore Straordinario", f"{df_aggregated['ore_straordinario'].sum():,.2f}")
-    col4.metric("📉 Ore Assenza", f"{df_aggregated['ore_assenza'].sum():,.2f}")
+    # --- TABELLA AGGREGATA ---
+    st.subheader("Riepilogo per Operaio")
+    summary_df = df_filtered.groupby('operaio').agg(
+        ore_lavorate=('ore_lavorate', 'sum'),
+        ore_regolari=('ore_regolari', 'sum'),
+        ore_straordinario=('ore_straordinario', 'sum'),
+        ore_assenza=('ore_assenza', 'sum')
+    ).reset_index().round(2)
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    
+    st.divider()
+
+    # --- DETTAGLIO GIORNALIERO ---
+    with st.expander("Mostra dettaglio giornaliero filtrato"):
+        st.dataframe(df_filtered, use_container_width=True, hide_index=True,
+                     column_config={"data": st.column_config.DateColumn("Data", format="DD/MM/YYYY")})
