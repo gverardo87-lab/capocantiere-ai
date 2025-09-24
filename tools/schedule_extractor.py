@@ -1,16 +1,19 @@
-# tools/schedule_extractor.py
+# tools/schedule_extractor.py - Aggiornato per il TUO cronoprogramma
 from __future__ import annotations
 import io
 from typing import List, Dict, Any
 import pandas as pd
+from datetime import datetime
 
 class ScheduleParsingError(Exception):
-    """Eccezione personalizzata per errori durante il parsing dei file di cronoprogramma."""
     pass
 
 def parse_schedule_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
     """
-    Analizza un file Excel (.xlsx) di cronoprogramma in modo semplice e robusto.
+    Analizza il cronoprogramma nel TUO formato specifico:
+    - Headers: ID_Attivita, Descrizione, Data_Inizio, Data_Fine, Stato_Avanzamento, Commessa, Predecessori
+    - Date formato: "01/09/25" (DD/MM/YY)
+    - ID con prefissi tipo: MON-001, FAM-001, ELE-001
     """
     try:
         df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl')
@@ -18,31 +21,47 @@ def parse_schedule_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
         if df.empty:
             raise ScheduleParsingError("Il file Excel è vuoto o illeggibile.")
 
-        # 1. Pulizia dei nomi delle colonne (rimuove spazi extra)
+        # Pulizia nomi colonne
         df.columns = df.columns.str.strip()
 
-        # 2. Verifica delle colonne obbligatorie
+        # Verifica colonne richieste
         required_columns = ['ID_Attivita', 'Descrizione', 'Data_Inizio', 'Data_Fine']
         for col in required_columns:
             if col not in df.columns:
                 raise ScheduleParsingError(f"Colonna richiesta mancante: '{col}'.")
 
-        # 3. Rimuove righe completamente vuote che potrebbero dare problemi
+        print(f"✅ Trovate {len(df)} attività nel cronoprogramma")
+
+        # Pulizia righe vuote
         df.dropna(how='all', inplace=True)
 
-        # 4. Gestione delle date: la parte più importante
-        # Converte le colonne in date, e se una data non è valida, la cella diventa "NaT" (Not a Time)
-        df['Data_Inizio'] = pd.to_datetime(df['Data_Inizio'], errors='coerce')
-        df['Data_Fine'] = pd.to_datetime(df['Data_Fine'], errors='coerce')
+        # PARSING DATE SPECIFICO PER IL TUO FORMATO "DD/MM/YY"
+        def parse_date_format(date_str):
+            if pd.isna(date_str):
+                return pd.NaT
+            try:
+                # Prova formato DD/MM/YY (il tuo formato)
+                return pd.to_datetime(date_str, format='%d/%m/%y')
+            except:
+                try:
+                    # Prova formato DD/MM/YYYY (alternativo)
+                    return pd.to_datetime(date_str, format='%d/%m/%Y')
+                except:
+                    # Ultimo tentativo con parsing automatico
+                    return pd.to_datetime(date_str, errors='coerce')
 
-        # 5. Filtro finale: teniamo solo le righe che hanno SIA una data di inizio VALIDA SIA una di fine VALIDA
+        df['Data_Inizio'] = df['Data_Inizio'].apply(parse_date_format)
+        df['Data_Fine'] = df['Data_Fine'].apply(parse_date_format)
+
+        # Filtra solo righe con date valide
         df.dropna(subset=['Data_Inizio', 'Data_Fine'], inplace=True)
 
-        # Se dopo il filtro non resta nulla, lo segnaliamo
         if df.empty:
-            raise ScheduleParsingError("Il file non contiene righe con date di inizio e fine valide.")
-        
-        # 6. Conversione finale dei dati per il database
+            raise ScheduleParsingError("Nessuna attività con date valide trovata.")
+
+        print(f"✅ {len(df)} attività con date valide processate")
+
+        # Conversione finale per il database
         records = []
         for _, row in df.iterrows():
             record = {
@@ -50,7 +69,6 @@ def parse_schedule_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
                 "descrizione": str(row['Descrizione']),
                 "data_inizio": row['Data_Inizio'].strftime('%Y-%m-%d'),
                 "data_fine": row['Data_Fine'].strftime('%Y-%m-%d'),
-                # Gestione sicura delle colonne opzionali
                 "stato_avanzamento": int(row.get('Stato_Avanzamento', 0) or 0),
                 "commessa": str(row.get('Commessa', '') or ''),
                 "predecessori": str(row.get('Predecessori', '') or '')
@@ -62,5 +80,4 @@ def parse_schedule_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
     except Exception as e:
         if isinstance(e, ScheduleParsingError):
             raise
-        # Rilancia un errore più chiaro
-        raise ScheduleParsingError(f"Errore critico durante la lettura del file Excel. Dettagli: {e}")
+        raise ScheduleParsingError(f"Errore durante la lettura del cronoprogramma: {e}")

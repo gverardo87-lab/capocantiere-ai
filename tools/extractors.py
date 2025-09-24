@@ -1,4 +1,4 @@
-# tools/extractors.py
+# tools/extractors.py - Aggiornato per i tuoi formati specifici
 from __future__ import annotations
 import io
 from datetime import date
@@ -6,8 +6,7 @@ from typing import List, Dict, Any, Tuple
 import pandas as pd
 import locale
 
-# Impostiamo la lingua italiana per poter riconoscere i nomi dei mesi
-# Questo blocco prova diverse configurazioni per la massima compatibilità
+# Impostiamo la lingua italiana per i mesi
 try:
     locale.setlocale(locale.LC_TIME, 'it_IT.UTF-8')
 except locale.Error:
@@ -32,11 +31,7 @@ def _parse_month_year_from_header(header_string: str) -> Tuple[int, int]:
     
     # Converte il nome del mese in un numero (1-12)
     try:
-        # Crea un oggetto data fittizio per estrarre il numero del mese
-        month_num = list(map(str.lower, locale.nl_langinfo(locale.MONTH).split(';'))).index(month_str.lower()) + 1
-
-    except (ValueError, AttributeError):
-        # Fallback nel caso il locale non funzioni
+        # Fallback per i mesi italiani
         mesi = {
             'gennaio': 1, 'febbraio': 2, 'marzo': 3, 'aprile': 4, 'maggio': 5, 'giugno': 6,
             'luglio': 7, 'agosto': 8, 'settembre': 9, 'ottobre': 10, 'novembre': 11, 'dicembre': 12
@@ -44,6 +39,8 @@ def _parse_month_year_from_header(header_string: str) -> Tuple[int, int]:
         month_num = mesi.get(month_str.lower())
         if not month_num:
             raise ExcelParsingError(f"Mese non riconosciuto: '{month_str}'.")
+    except Exception:
+        raise ExcelParsingError(f"Errore nel parsing del mese: '{month_str}'.")
 
     try:
         year_num = int(year_str)
@@ -54,23 +51,10 @@ def _parse_month_year_from_header(header_string: str) -> Tuple[int, int]:
 
 def parse_monthly_timesheet_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
     """
-    Analizza un file Excel di rapportino mensile, estraendo automaticamente
-    mese e anno dalla prima riga.
-
-    La struttura attesa del file è:
-    - Riga 1: Mese e Anno (es. "SETTEMBRE 2025").
-    - Riga 2: Intestazioni delle colonne ('Operaio', 1, 2, 3...).
-    - Dalla riga 3 in poi: Dati delle presenze.
-
-    Args:
-        file_bytes: Il contenuto del file Excel in formato bytes.
-
-    Returns:
-        Una lista di dizionari, ognuno rappresentante una presenza giornaliera.
-        Esempio: {'data': '2025-09-01', 'operaio': 'Rossi Luca', 'ore': 8.0}
-
-    Raises:
-        ExcelParsingError: Per qualsiasi errore di formato nel file Excel.
+    Analizza il rapportino mensile nel TUO formato specifico:
+    - Riga 1: "SETTEMBRE 2025"
+    - Riga 2: "Operaio", 1, 2, 3... 30
+    - Righe successive: Nome operaio + ore per ogni giorno
     """
     try:
         # Leggiamo la prima riga per estrarre mese e anno
@@ -80,29 +64,37 @@ def parse_monthly_timesheet_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
         
         month_year_string = str(df_header.iloc[0, 0])
         month, year = _parse_month_year_from_header(month_year_string)
+        print(f"✅ Rilevato: {month_year_string} → Mese {month}, Anno {year}")
 
-        # Leggiamo il resto del file, usando la seconda riga (indice 1) come intestazione
+        # Leggiamo il resto del file, usando la seconda riga come intestazione
         df_data = pd.read_excel(io.BytesIO(file_bytes), header=1)
 
-        # --- VALIDAZIONE E TRASFORMAZIONE (come prima) ---
+        # Validazione colonne
         if 'Operaio' not in df_data.columns:
             raise ExcelParsingError("La colonna 'Operaio' non è stata trovata (attesa in riga 2).")
         
+        print(f"✅ Trovati {len(df_data)} operai nel rapportino")
+        
+        # Pulizia dati
         df_data.dropna(how='all', inplace=True)
         
+        # Converte da formato wide a long (una riga per ogni giorno/operaio)
         df_melted = df_data.melt(id_vars=['Operaio'], var_name='giorno', value_name='ore')
         
+        # Filtra solo righe con ore > 0
         df_melted.dropna(subset=['ore'], inplace=True)
         df_melted = df_melted[df_melted['ore'] > 0]
         
+        # Pulizia tipi di dati
         df_melted['Operaio'] = df_melted['Operaio'].astype(str)
         df_melted['giorno'] = pd.to_numeric(df_melted['giorno'], errors='coerce')
         df_melted['ore'] = pd.to_numeric(df_melted['ore'], errors='coerce')
         
+        # Rimuove righe con dati non validi
         df_melted.dropna(subset=['giorno', 'ore'], inplace=True)
         df_melted['giorno'] = df_melted['giorno'].astype(int)
 
-        # --- CREAZIONE RECORD FINALI ---
+        # Creazione record finali
         records = []
         for _, row in df_melted.iterrows():
             try:
@@ -113,16 +105,13 @@ def parse_monthly_timesheet_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
                     "ore": float(row['ore'])
                 })
             except ValueError:
-                print(f"Attenzione: giorno '{row['giorno']}' non valido per {month}/{year}. Riga ignorata.")
+                print(f"⚠️ Giorno '{row['giorno']}' non valido per {month}/{year}. Riga ignorata.")
                 continue
 
-        if not records:
-             print("Attenzione: Nessun record valido trovato nel file dopo l'analisi.")
-
+        print(f"✅ Processati {len(records)} record validi")
         return records
 
     except Exception as e:
-        # Se l'errore è già del nostro tipo, lo rilanciamo, altrimenti lo "impacchettiamo"
         if isinstance(e, ExcelParsingError):
             raise
-        raise ExcelParsingError(f"Errore imprevisto durante l'analisi del file Excel: {e}")
+        raise ExcelParsingError(f"Errore imprevisto durante l'analisi del rapportino: {e}")
