@@ -129,3 +129,6 @@ knowledge_base/documents/*
 
 # Ignora l'intera cartella del Vector Store
 knowledge_base/vectorstore/
+
+# PDF files
+*.pdf
