@@ -1,4 +1,4 @@
-# core/chat_logic.py - Sistema Completo CapoCantiere AI
+# core/chat_logic.py - Versione Professionale con Workflow Engine
 from __future__ import annotations
 import sys
 import os
@@ -12,102 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from core.config import OLLAMA_MODEL
 from core.db import db_manager
 from core.schedule_db import schedule_db_manager
-
-class CantiereRolesKnowledge:
-    """
-    Knowledge base completa dei ruoli e competenze del cantiere navale.
-    Basata sui formati reali dei file forniti dall'utente.
-    """
-    
-    # Keywords per identificare ruoli dalle domande
-    ROLES_KEYWORDS = {
-        "carpentieri": ["carpentiere", "carpentieri", "falegname", "legno", "strutture", "carpenteria"],
-        "saldatori": ["saldatore", "saldatori", "saldatura", "tig", "mig", "elettrodo", "saldo", "welding"],
-        "elettricisti": ["elettricista", "elettricisti", "elettrico", "impianti", "cavi", "quadri", "electrical"],
-        "montatori": ["montatore", "montatori", "montaggio", "assemblaggio", "installazione", "montage"],
-        "verniciatori": ["verniciatore", "verniciatori", "verniciatura", "pittura", "sabbiatura", "painting"],
-        "fabbricatori": ["fabbricatore", "fabbricatori", "fabbricazione", "costruzione", "fabrication"],
-        "tubisti": ["tubista", "tubisti", "tubazioni", "impianti", "raccordi"],
-        "meccanici": ["meccanico", "meccanici", "motori", "meccanica", "manutenzione"]
-    }
-    
-    # Mapping basato sui prefissi ID attività REALI dal cronoprogramma
-    ACTIVITY_ID_TO_ROLE = {
-        "MON": "montatori",      # MON-001, MON-002 = Montaggio, Raddrizzatura
-        "FAM": "fabbricatori",   # FAM-001, FAM-002 = Fabbricazione, Installazione
-        "ELE": "elettricisti",   # ELE-001, ELE-002 = Electrical, Impianti
-        "PIT": "verniciatori",   # PIT-001, PIT-002 = Pittura, Ricariche
-        "SAL": "saldatori",      # SAL-001 = Saldatura (se presente)
-        "CAR": "carpentieri",    # CAR-001 = Carpenteria (se presente)
-        "TUB": "tubisti",        # TUB-001 = Tubazioni (se presente)
-        "MEC": "meccanici"       # MEC-001 = Meccanica (se presente)
-    }
-    
-    # Mapping operai basato sui NOMI REALI dal rapportino
-    NAME_ROLE_PATTERNS = {
-        "carpentieri": ["verardo", "giacomo", "romano"],
-        "saldatori": ["rossi", "luca", "florin", "roman", "allam"],
-        "elettricisti": ["kakhon", "khan", "billal", "sarkar"],
-        "montatori": ["verdi", "marco", "bianchi", "anna"],
-        "verniciatori": ["gialli", "simone"],
-        "fabbricatori": ["verardo", "giacomo"]  # Può avere doppio ruolo
-    }
-    
-    @classmethod
-    def identify_role_from_query(cls, query: str) -> str:
-        """Identifica il ruolo richiesto nella domanda dell'utente."""
-        query_lower = query.lower()
-        
-        for role, keywords in cls.ROLES_KEYWORDS.items():
-            if any(keyword in query_lower for keyword in keywords):
-                return role
-        
-        return "operai_generici"
-    
-    @classmethod
-    def infer_worker_role(cls, worker_name: str) -> str:
-        """Inferisce il ruolo di un operaio dal nome (basato su pattern reali)."""
-        if not worker_name:
-            return "ruolo_non_identificato"
-            
-        name_lower = worker_name.lower()
-        
-        for role, patterns in cls.NAME_ROLE_PATTERNS.items():
-            if any(pattern in name_lower for pattern in patterns):
-                return role
-        
-        return "ruolo_non_identificato"
-    
-    @classmethod
-    def get_required_role_from_activity_id(cls, activity_id: str) -> str:
-        """
-        Determina il ruolo necessario dall'ID attività.
-        Es: "MON-001" → "montatori", "ELE-002" → "elettricisti"
-        """
-        if not activity_id or '-' not in activity_id:
-            return "ruolo_non_identificato"
-        
-        try:
-            prefix = activity_id.split('-')[0].upper()
-            return cls.ACTIVITY_ID_TO_ROLE.get(prefix, "ruolo_non_identificato")
-        except Exception:
-            return "ruolo_non_identificato"
-    
-    @classmethod
-    def get_activities_by_role(cls, activities_list: List[Dict]) -> Dict[str, List]:
-        """Raggruppa attività per ruolo necessario."""
-        activities_by_role = {}
-        
-        for activity in activities_list:
-            activity_id = activity.get('id_attivita', '')
-            required_role = cls.get_required_role_from_activity_id(activity_id)
-            
-            if required_role not in activities_by_role:
-                activities_by_role[required_role] = []
-            
-            activities_by_role[required_role].append(activity)
-        
-        return activities_by_role
+from core.workflow_engine import workflow_engine, WorkRole, analyze_resource_allocation
 
 class SmartQuestionRouter:
     """Router intelligente che analizza l'intento delle domande dell'utente."""
@@ -122,61 +27,79 @@ class SmartQuestionRouter:
         
         intent = {
             "type": "generic",
-            "specific_role": None,
-            "specific_metric": None,
-            "wants_count": False,
-            "wants_assignment": False,
-            "specific_activity": None
+            "wants_workflow": False,
+            "wants_bottleneck": False,
+            "wants_role_analysis": False,
+            "wants_optimization": False,
+            "specific_activity": None,
+            "specific_role": None
         }
         
-        # Identifica ruoli specifici
-        role = CantiereRolesKnowledge.identify_role_from_query(question)
-        if role != "operai_generici":
-            intent["type"] = "role_specific"
-            intent["specific_role"] = role
+        # Analisi workflow
+        if any(word in question_lower for word in ["workflow", "fasi", "processo", "sequenza", "dipendenz"]):
+            intent["type"] = "workflow_analysis"
+            intent["wants_workflow"] = True
         
-        # Identifica metriche specifiche
-        if any(word in question_lower for word in ["assenz", "ferie", "malattia"]):
-            intent["specific_metric"] = "absences"
-        elif any(word in question_lower for word in ["straordinari", "extra", "overtime"]):
-            intent["specific_metric"] = "overtime"
-        elif any(word in question_lower for word in ["ore lavorate", "ore totali", "tempo"]):
-            intent["specific_metric"] = "total_hours"
+        # Analisi colli di bottiglia
+        if any(word in question_lower for word in ["bottiglia", "bottleneck", "critic", "mancan", "carenz"]):
+            intent["type"] = "bottleneck_analysis"
+            intent["wants_bottleneck"] = True
         
-        # Richiesta di conteggio
-        if any(word in question_lower for word in ["quanti", "quante", "numero", "conta"]):
-            intent["wants_count"] = True
-        
-        # Richiesta di assegnazione
-        if any(word in question_lower for word in ["chi metto", "assegna", "sposta", "riassegna"]):
-            intent["wants_assignment"] = True
-        
-        # Attività specifica menzionata
-        if any(prefix in question_lower for prefix in ["mon-", "fam-", "ele-", "pit-", "sal-", "car-"]):
-            # Estrae l'ID attività se presente
-            words = question_lower.split()
-            for word in words:
-                if any(prefix in word for prefix in ["mon-", "fam-", "ele-", "pit-", "sal-", "car-"]):
-                    intent["specific_activity"] = word.upper()
+        # Analisi ruoli
+        if any(word in question_lower for word in ["carpentier", "saldator", "molator", "verniciator", "elettricist", "tubist", "meccanic", "montator", "fabbricator"]):
+            intent["type"] = "role_analysis"
+            intent["wants_role_analysis"] = True
+            
+            # Identifica il ruolo specifico
+            role_keywords = {
+                "carpentiere": ["carpentier"],
+                "saldatore": ["saldator"],
+                "molatore": ["molator"],
+                "verniciatore": ["verniciator"],
+                "elettricista": ["elettricist"],
+                "tubista": ["tubist"],
+                "meccanico": ["meccanic"],
+                "montatore": ["montator"],
+                "fabbricatore": ["fabbricator"]
+            }
+            
+            for role, keywords in role_keywords.items():
+                if any(kw in question_lower for kw in keywords):
+                    intent["specific_role"] = role
                     break
+        
+        # Richiesta ottimizzazione
+        if any(word in question_lower for word in ["ottimizz", "miglior", "efficien", "suggeriment", "consigli"]):
+            intent["type"] = "optimization"
+            intent["wants_optimization"] = True
+        
+        # Attività specifica
+        activity_patterns = ["mon-", "fam-", "ele-"]
+        for pattern in activity_patterns:
+            if pattern in question_lower:
+                # Estrai l'ID attività
+                import re
+                match = re.search(r'(mon|fam|ele)-\d+', question_lower)
+                if match:
+                    intent["specific_activity"] = match.group().upper()
+                    intent["type"] = "activity_specific"
+                break
         
         return intent
 
 class PureDataReader:
     """
     Lettore puro dei dati - ZERO calcoli, solo lettura dal database.
-    Tutti i calcoli (ore_regolari, ore_straordinario, ore_assenza) 
-    sono già stati fatti da logic.py durante l'importazione.
+    Versione aggiornata con supporto per ruoli.
     """
     
     @staticmethod
     def read_processed_presence_data() -> Dict[str, Any]:
-        """Legge dati presenze GIÀ PROCESSATI da logic.py - NO calcoli."""
+        """Legge dati presenze GIÀ PROCESSATI con ruoli inclusi."""
         current_month = datetime.now().month
         current_year = datetime.now().year
         
         try:
-            # LEGGE DATI GIÀ COMPLETI (ore_regolari, ore_straordinario, ore_assenza già calcolate)
             raw_data = db_manager.get_presence_data(current_year, current_month)
             
             if not raw_data:
@@ -185,12 +108,28 @@ class PureDataReader:
                     "message": "Nessun rapportino caricato per questo mese"
                 }
             
+            # Aggrega statistiche per ruolo
+            role_stats = {}
+            for record in raw_data:
+                role = record.get('ruolo', 'Non specificato')
+                if role not in role_stats:
+                    role_stats[role] = {
+                        'count': 0,
+                        'total_hours': 0,
+                        'overtime': 0
+                    }
+                role_stats[role]['count'] += 1
+                role_stats[role]['total_hours'] += record['ore_lavorate']
+                role_stats[role]['overtime'] += record['ore_straordinario']
+            
             return {
                 "status": "data_available",
-                "raw_records": raw_data,  # Dati grezzi completi per l'AI
+                "raw_records": raw_data,
+                "role_statistics": role_stats,
                 "summary": {
                     "total_records": len(raw_data),
                     "unique_workers": len(set(r['operaio'] for r in raw_data)),
+                    "unique_roles": len(role_stats),
                     "date_range": f"{raw_data[0]['data']} - {raw_data[-1]['data']}" if raw_data else "N/A"
                 }
             }
@@ -200,7 +139,7 @@ class PureDataReader:
     
     @staticmethod 
     def read_processed_schedule_data() -> Dict[str, Any]:
-        """Legge cronoprogramma dal database - NO calcoli."""
+        """Legge cronoprogramma dal database."""
         try:
             raw_data = schedule_db_manager.get_schedule_data()
             
@@ -210,389 +149,350 @@ class PureDataReader:
                     "message": "Nessun cronoprogramma caricato"
                 }
             
+            # Analizza attività per tipo
+            activity_by_type = {'MON': [], 'FAM': [], 'ELE': [], 'OTHER': []}
+            for activity in raw_data:
+                activity_id = activity.get('id_attivita', '')
+                if activity_id.startswith('MON'):
+                    activity_by_type['MON'].append(activity)
+                elif activity_id.startswith('FAM'):
+                    activity_by_type['FAM'].append(activity)
+                elif activity_id.startswith('ELE'):
+                    activity_by_type['ELE'].append(activity)
+                else:
+                    activity_by_type['OTHER'].append(activity)
+            
             return {
                 "status": "data_available", 
                 "raw_records": raw_data,
+                "by_type": activity_by_type,
                 "summary": {
-                    "total_activities": len(raw_data)
+                    "total_activities": len(raw_data),
+                    "mon_activities": len(activity_by_type['MON']),
+                    "fam_activities": len(activity_by_type['FAM']),
+                    "ele_activities": len(activity_by_type['ELE'])
                 }
             }
             
         except Exception as e:
             return {"status": "error", "message": f"Errore lettura database cronoprogramma: {e}"}
-    
-    @staticmethod
-    def get_critical_activities(days_ahead: int = 7) -> List[Dict]:
-        """Identifica attività critiche (scadono presto e non complete)."""
-        try:
-            schedule_data = PureDataReader.read_processed_schedule_data()
-            
-            if schedule_data["status"] != "data_available":
-                return []
-            
-            activities = schedule_data["raw_records"]
-            today = date.today()
-            critical_activities = []
-            
-            for activity in activities:
-                try:
-                    end_date = datetime.strptime(activity['data_fine'], '%Y-%m-%d').date()
-                    completion = activity.get('stato_avanzamento', 0)
-                    
-                    # Considera critica se scade nei prossimi N giorni e non è completa
-                    days_remaining = (end_date - today).days
-                    
-                    if days_remaining <= days_ahead and completion < 100:
-                        activity_copy = activity.copy()
-                        activity_copy['giorni_rimanenti'] = days_remaining
-                        critical_activities.append(activity_copy)
-                        
-                except Exception as e:
-                    print(f"Errore parsing attività {activity.get('id_attivita', 'N/A')}: {e}")
-                    continue
-            
-            # Ordina per urgenza (meno giorni rimanenti prima)
-            critical_activities.sort(key=lambda x: x.get('giorni_rimanenti', 999))
-            return critical_activities
-            
-        except Exception as e:
-            print(f"Errore identificazione attività critiche: {e}")
-            return []
 
-class IntelligentResponseGenerator:
-    """Generatore di risposte intelligenti basato sui dati reali."""
+class WorkflowAwareResponseGenerator:
+    """Generatore di risposte che integra l'analisi dei workflow."""
     
     def __init__(self):
         self.client = Client()
     
-    def generate_role_specific_response(self, question_intent: Dict, presence_data: Dict, schedule_data: Dict) -> str:
-        """Genera risposta specifica per domande sui ruoli."""
-        role_requested = question_intent["specific_role"]
+    def generate_workflow_response(self, question_intent: Dict, presence_data: Dict, schedule_data: Dict) -> str:
+        """Genera risposta specifica per domande sui workflow."""
         
-        if presence_data["status"] != "data_available":
-            return f"❌ **Dati presenze non disponibili**\n\nCarica i rapportini per vedere statistiche su {role_requested}."
+        response = "## 🔄 Analisi Workflow\n\n"
         
-        # Classifica operai per ruolo
-        workers_by_role = self._classify_workers_by_role(presence_data["raw_records"])
-        role_workers = workers_by_role.get(role_requested, [])
-        
-        if question_intent.get("wants_count", False):
-            # Risposta di conteggio
-            count = len(role_workers)
-            response = f"🔍 **{role_requested.title()} identificati: {count}**\n\n"
-            
-            if count > 0:
-                response += "**Elenco**:\n"
-                for worker in role_workers:
-                    response += f"- {worker['name']}: {worker['total_hours']}h lavorate ({worker['overtime_hours']}h straord.)\n"
-            
-            # Aggiungi breakdown totale
-            response += f"\n📊 **Breakdown completo per ruolo**:\n"
-            for role, workers in workers_by_role.items():
-                if workers:  # Solo ruoli con operai
-                    response += f"- **{role.replace('_', ' ').title()}**: {len(workers)}\n"
-                    
-            if schedule_data["status"] == "data_available":
-                activities_by_role = CantiereRolesKnowledge.get_activities_by_role(schedule_data["raw_records"])
-                role_activities = activities_by_role.get(role_requested, [])
-                if role_activities:
-                    response += f"\n🎯 **Attività per {role_requested}**: {len(role_activities)} in corso"
-            
-            return response
-        
-        else:
-            # Risposta generale sui ruoli
-            if not role_workers:
-                return f"❌ **Nessun {role_requested} identificato** nei dati attuali.\n\n💡 **Suggerimento**: Verifica i nomi nei rapportini."
-            
-            response = f"👥 **Situazione {role_requested.title()}** ({len(role_workers)} operai):\n\n"
-            
-            # Ordina per disponibilità (meno straordinari = più disponibile)
-            role_workers.sort(key=lambda x: x['overtime_hours'])
-            
-            for worker in role_workers:
-                availability = "🟢 Disponibile" if worker['overtime_hours'] < 10 else "🟡 Carico medio" if worker['overtime_hours'] < 25 else "🔴 Sovraccarico"
-                response += f"- **{worker['name']}**: {worker['total_hours']}h totali, {worker['overtime_hours']}h straord. {availability}\n"
-            
-            # Aggiungi attività correlate se disponibili
-            if schedule_data["status"] == "data_available":
-                activities_by_role = CantiereRolesKnowledge.get_activities_by_role(schedule_data["raw_records"])
-                role_activities = activities_by_role.get(role_requested, [])
-                if role_activities:
-                    response += f"\n🎯 **Attività assegnate**:\n"
-                    for activity in role_activities[:3]:  # Prime 3
-                        response += f"- {activity.get('id_attivita', 'N/A')}: {activity.get('stato_avanzamento', 0)}% completata\n"
-            
-            return response
-    
-    def generate_assignment_response(self, question_intent: Dict, presence_data: Dict, schedule_data: Dict) -> str:
-        """Genera risposta per domande di assegnazione ('chi metto su...')."""
-        
-        if presence_data["status"] != "data_available":
-            return "❌ **Dati presenze non disponibili** per suggerimenti di assegnazione."
-        
-        # Se specifica un'attività particolare
+        # Se chiede di un'attività specifica
         if question_intent.get("specific_activity"):
             activity_id = question_intent["specific_activity"]
-            required_role = CantiereRolesKnowledge.get_required_role_from_activity_id(activity_id)
+            workflow = workflow_engine.get_workflow_for_activity(activity_id)
             
-            workers_by_role = self._classify_workers_by_role(presence_data["raw_records"])
-            available_workers = workers_by_role.get(required_role, [])
-            
-            if not available_workers:
-                return f"❌ **Nessun {required_role} identificato** per l'attività {activity_id}."
-            
-            # Ordina per disponibilità
-            available_workers.sort(key=lambda x: x['overtime_hours'])
-            best_worker = available_workers[0]
-            
-            return f"""🎯 **Raccomandazione per {activity_id}**:
-
-**Ruolo richiesto**: {required_role.title()}
-**Operaio consigliato**: {best_worker['name']}
-- Ore totali: {best_worker['total_hours']}h
-- Straordinari: {best_worker['overtime_hours']}h
-- **Rationale**: Minor carico di lavoro tra i {required_role}
-
-💡 **Alternative**: {', '.join([w['name'] for w in available_workers[1:3]])}"""
-        
-        # Assegnazione generica - mostra attività critiche
-        critical_activities = PureDataReader.get_critical_activities()
-        
-        if not critical_activities:
-            return "✅ **Nessuna attività critica** al momento. Allocazione risorse ottimale."
-        
-        response = "🚨 **Attività critiche che richiedono assegnazioni**:\n\n"
-        
-        workers_by_role = self._classify_workers_by_role(presence_data["raw_records"])
-        
-        for activity in critical_activities[:3]:  # Top 3 più critiche
-            activity_id = activity.get('id_attivita', 'N/A')
-            required_role = CantiereRolesKnowledge.get_required_role_from_activity_id(activity_id)
-            available_workers = workers_by_role.get(required_role, [])
-            
-            days_remaining = activity.get('giorni_rimanenti', 0)
-            urgency = "🔥 URGENTISSIMA" if days_remaining <= 1 else "⚠️ URGENTE" if days_remaining <= 3 else "🟡 Da monitorare"
-            
-            response += f"**{activity_id}** - {activity.get('descrizione', 'N/A')[:50]}...\n"
-            response += f"- Stato: {activity.get('stato_avanzamento', 0)}% | Giorni rimasti: {days_remaining} {urgency}\n"
-            
-            if available_workers:
-                available_workers.sort(key=lambda x: x['overtime_hours'])
-                best_worker = available_workers[0]
-                response += f"- **Consigliato**: {best_worker['name']} ({best_worker['overtime_hours']}h straord.)\n"
+            if workflow:
+                response += f"### Workflow per {activity_id} - {workflow.name}\n\n"
+                response += f"*{workflow.description}*\n\n"
+                
+                response += "**Fasi di lavoro:**\n"
+                for phase in workflow.phases:
+                    response += f"- **{phase.role.value}** ({phase.start_percentage}% → {phase.end_percentage}%)"
+                    if phase.requires_roles:
+                        response += f" - Richiede: {', '.join([r.value for r in phase.requires_roles])}"
+                    response += "\n"
+                
+                # Trova stato attuale se disponibile
+                if schedule_data["status"] == "data_available":
+                    for activity in schedule_data["raw_records"]:
+                        if activity['id_attivita'] == activity_id:
+                            current_progress = activity.get('stato_avanzamento', 0)
+                            active_roles = workflow.get_active_roles_at_percentage(current_progress)
+                            
+                            response += f"\n**Stato attuale**: {current_progress}%\n"
+                            response += f"**Ruoli attualmente attivi**: {', '.join([r.value for r in active_roles])}\n"
+                            
+                            next_phase = workflow.get_next_phase(current_progress)
+                            if next_phase:
+                                response += f"**Prossima fase**: {next_phase.role.value} al {next_phase.start_percentage}%\n"
+                            break
             else:
-                response += f"- **Problema**: Nessun {required_role} disponibile!\n"
+                response += f"❌ Nessun workflow definito per l'attività {activity_id}\n"
+        
+        # Analisi generale workflow
+        else:
+            response += "### Workflow Standard del Cantiere\n\n"
             
-            response += "\n"
+            workflows_info = {
+                'MON': "**Montaggio Scafo**: Carpentiere → Saldatore → Molatore → Verniciatore",
+                'FAM': "**Fuori Apparato Motore**: Fabbricatore → Carpentiere → Saldatore → Molatore → Verniciatore",
+                'ELE': "**Impianti Elettrici**: Elettricista (0-100%)"
+            }
+            
+            for code, description in workflows_info.items():
+                response += f"- {description}\n"
+            
+            response += "\n💡 **Nota**: I workflow possono avere fasi sovrapposte per ottimizzare i tempi\n"
+        
+        return response
+    
+    def generate_bottleneck_response(self, presence_data: Dict, schedule_data: Dict) -> str:
+        """Genera risposta per analisi colli di bottiglia."""
+        
+        response = "## 🚨 Analisi Colli di Bottiglia\n\n"
+        
+        if presence_data["status"] != "data_available" or schedule_data["status"] != "data_available":
+            return response + "❌ Dati insufficienti per l'analisi. Carica presenze e cronoprogramma.\n"
+        
+        # Analizza con workflow engine
+        analysis = analyze_resource_allocation(
+            presence_data["raw_records"],
+            schedule_data["raw_records"]
+        )
+        
+        bottlenecks = analysis['bottleneck_analysis']['bottlenecks']
+        
+        if not bottlenecks:
+            response += "✅ **Nessun collo di bottiglia identificato!**\n\n"
+            response += "L'allocazione delle risorse è attualmente bilanciata.\n"
+        else:
+            critical = [b for b in bottlenecks if b['severity'] == 'CRITICO']
+            high = [b for b in bottlenecks if b['severity'] == 'ALTO']
+            
+            if critical:
+                response += "### 🔴 Criticità URGENTI\n"
+                for bottleneck in critical:
+                    response += f"- **{bottleneck['role']}**: MANCANO completamente ({bottleneck['demand_hours']:.0f} ore richieste)\n"
+                response += "\n"
+            
+            if high:
+                response += "### 🟡 Criticità ALTE\n"
+                for bottleneck in high:
+                    response += f"- **{bottleneck['role']}**: Carenza di {bottleneck['shortage_hours']:.0f} ore "
+                    response += f"({bottleneck['available_workers']} operai disponibili)\n"
+                response += "\n"
+            
+            # Suggerimenti
+            response += "### 💡 Azioni Consigliate\n"
+            if critical:
+                response += f"1. **Assumere URGENTEMENTE**: {', '.join([b['role'] for b in critical])}\n"
+            response += "2. Riorganizzare le priorità delle attività\n"
+            response += "3. Considerare straordinari mirati per ruoli carenti\n"
+        
+        return response
+    
+    def generate_optimization_response(self, presence_data: Dict, schedule_data: Dict) -> str:
+        """Genera suggerimenti di ottimizzazione."""
+        
+        response = "## 🎯 Suggerimenti Ottimizzazione\n\n"
+        
+        if presence_data["status"] != "data_available" or schedule_data["status"] != "data_available":
+            return response + "❌ Dati insufficienti. Carica presenze e cronoprogramma.\n"
+        
+        # Genera suggerimenti con workflow engine
+        suggestions = workflow_engine.suggest_optimal_schedule(
+            schedule_data["raw_records"],
+            presence_data["raw_records"]
+        )
+        
+        if not suggestions:
+            response += "✅ L'allocazione attuale è già ottimizzata!\n"
+        else:
+            response += f"### Top 5 Azioni Prioritarie\n\n"
+            
+            for i, suggestion in enumerate(suggestions[:5], 1):
+                response += f"**{i}. {suggestion['activity_id']}** (Progresso: {suggestion['current_progress']}%)\n"
+                
+                if suggestion['action'] == 'INIZIA_FASE':
+                    response += f"   → Iniziare fase **{suggestion['next_phase_role']}** "
+                    response += f"(dal {suggestion['next_phase_start']}%)\n"
+                elif suggestion['action'] == 'CONTINUA':
+                    response += f"   → Continuare con: {', '.join(suggestion['required_roles'])}\n"
+                
+                if suggestion['workers_assigned']:
+                    response += f"   → Operai consigliati: "
+                    response += ", ".join([w['name'] for w in suggestion['workers_assigned']])
+                    response += "\n"
+                else:
+                    response += "   → ⚠️ ATTENZIONE: Nessun operaio disponibile!\n"
+                
+                response += "\n"
+        
+        # Aggiungi metriche di efficienza
+        if presence_data.get("role_statistics"):
+            response += "### 📊 Efficienza Attuale per Ruolo\n"
+            for role, stats in presence_data["role_statistics"].items():
+                if stats['count'] > 0:
+                    avg_overtime = stats['overtime'] / stats['count']
+                    efficiency = "🟢 Ottima" if avg_overtime < 10 else "🟡 Media" if avg_overtime < 25 else "🔴 Bassa"
+                    response += f"- **{role}**: {efficiency} (media straord: {avg_overtime:.1f}h)\n"
         
         return response
     
     def generate_ai_response(self, user_query: str, context_data: Dict) -> str:
-        """Genera risposta AI con context ottimizzato per evitare loop infiniti."""
+        """Genera risposta AI con context workflow-aware."""
         
-        # Context compatto e strutturato
-        context_lines = [f"AGGIORNAMENTO: {datetime.now().strftime('%d/%m/%Y %H:%M')}"]
+        # Prepara context includendo informazioni sui workflow
+        context_lines = [f"DATA: {datetime.now().strftime('%d/%m/%Y %H:%M')}"]
+        context_lines.append("SISTEMA: CapoCantiere AI con Workflow Engine Navale")
         
-        # Dati presenze
+        # Dati presenze con ruoli
         presence_data = context_data.get("presence_data", {})
-        if presence_data.get("status") == "data_available":
-            raw_records = presence_data["raw_records"]
-            
-            # Aggrega per operaio (MINIMO processing necessario)
-            operai_data = {}
-            for record in raw_records:
-                operaio = record['operaio']
-                if operaio not in operai_data:
-                    operai_data[operaio] = {'ore_lavorate': 0, 'ore_straordinario': 0, 'ore_assenza': 0}
-                # USA DATI GIÀ PROCESSATI da logic.py
-                operai_data[operaio]['ore_lavorate'] += record['ore_lavorate']
-                operai_data[operaio]['ore_straordinario'] += record['ore_straordinario'] 
-                operai_data[operaio]['ore_assenza'] += record['ore_assenza']
-            
-            context_lines.append(f"\nPRESENZE ({len(operai_data)} operai):")
-            for operaio, data in sorted(operai_data.items()):
-                inferred_role = CantiereRolesKnowledge.infer_worker_role(operaio)
-                context_lines.append(f"- {operaio} ({inferred_role}): {data['ore_lavorate']}h, {data['ore_straordinario']}h straord, {data['ore_assenza']}h assenza")
+        if presence_data.get("status") == "data_available" and presence_data.get("role_statistics"):
+            context_lines.append("\nDISTRIBUZIONE RUOLI:")
+            for role, stats in presence_data["role_statistics"].items():
+                context_lines.append(f"- {role}: {stats['count']} operai, {stats['total_hours']:.0f}h totali")
         
-        # Dati cronoprogramma (solo top critici per non sovraccaricare)
+        # Informazioni workflow
         schedule_data = context_data.get("schedule_data", {})
-        critical_activities = context_data.get("critical_activities", [])
-        if critical_activities:
-            context_lines.append(f"\nATTIVITÀ CRITICHE ({len(critical_activities)}):")
-            for activity in critical_activities[:3]:
-                activity_id = activity.get('id_attivita', 'N/A')
-                required_role = CantiereRolesKnowledge.get_required_role_from_activity_id(activity_id)
-                context_lines.append(f"- {activity_id} ({required_role}): {activity.get('stato_avanzamento', 0)}%, {activity.get('giorni_rimanenti', 0)} giorni")
+        if schedule_data.get("status") == "data_available":
+            context_lines.append("\nATTIVITÀ E WORKFLOW:")
+            for activity_type, activities in schedule_data.get("by_type", {}).items():
+                if activities and activity_type != 'OTHER':
+                    context_lines.append(f"- {activity_type}: {len(activities)} attività")
+        
+        # Bottlenecks se presenti
+        if "bottleneck_analysis" in context_data:
+            bottlenecks = context_data["bottleneck_analysis"].get("bottlenecks", [])
+            if bottlenecks:
+                context_lines.append("\nCRITICITÀ:")
+                for b in bottlenecks[:3]:
+                    context_lines.append(f"- {b['role']}: {b['severity']}")
         
         context = "\n".join(context_lines)
         
-        # Prompt ottimizzato anti-loop
-        prompt = f"""Sei un assistente CapoCantiere esperto. Rispondi in ITALIANO in modo diretto e conciso.
+        # Prompt ottimizzato per workflow
+        prompt = f"""Sei CapoCantiere AI, esperto in gestione cantieri navali con workflow engine.
 
 DOMANDA: "{user_query}"
 
-DATI REALI DISPONIBILI:
+CONTESTO SISTEMA:
 {context}
 
-ISTRUZIONI:
-- Usa SOLO i dati reali sopra forniti, mai inventare
-- Se chiede operai specifici, usa i nomi esatti dai dati
-- Se chiede ruoli, usa la classificazione (ruolo) mostrata
-- Rispondi PRECISAMENTE alla domanda, non informazioni extra
-- Massimo 8 righe, sii diretto
-- Se non hai abbastanza dati, dillo chiaramente
+CONOSCENZA WORKFLOW:
+- MON (Montaggio Scafo): Carpentiere+Aiutante (0-50%) → Saldatore (25-75%) → Molatore (50-85%) → Verniciatore (75-100%)
+- FAM (Fuori Apparato): Fabbricatore (0-40%) → Carpentiere+Aiutante (30-60%) → Saldatore (40-80%) → Molatore (60-90%) → Verniciatore (80-100%)
+- ELE (Elettrico): Elettricista (0-100%)
 
-RISPOSTA DIRETTA:"""
+ISTRUZIONI:
+- Rispondi in ITALIANO, modo professionale ma chiaro
+- Usa i dati reali del contesto
+- Applica la conoscenza dei workflow navali
+- Fornisci suggerimenti pratici e attuabili
+- Massimo 10 righe, sii preciso
+
+RISPOSTA:"""
 
         try:
             response = self.client.chat(
                 model=OLLAMA_MODEL,
                 messages=[{'role': 'user', 'content': prompt}],
                 options={
-                    'temperature': 0.05,  # Molto bassa per evitare creatività eccessiva
-                    'top_p': 0.7,
-                    'repeat_penalty': 1.5,  # Alto per evitare ripetizioni
-                    'stop': ['\n\n\n']  # Stop a tripli newline
+                    'temperature': 0.3,
+                    'top_p': 0.8,
+                    'repeat_penalty': 1.3
                 }
             )
             
-            ai_response = response['message']['content'].strip()
-            
-            # Controllo anti-loop e lunghezza
-            lines = ai_response.split('\n')
-            if len(lines) > 12:  # Troppo lungo
-                ai_response = '\n'.join(lines[:8]) + "\n\n*[Risposta limitata per chiarezza]*"
-            
-            # Rimuovi ripetizioni evidenti
-            if ai_response.count('Inoltre') > 2:
-                parts = ai_response.split('Inoltre')
-                ai_response = parts[0] + "*[Ulteriori dettagli disponibili su richiesta]*"
-            
-            return ai_response
+            return response['message']['content'].strip()
             
         except Exception as e:
-            return f"❌ Errore elaborazione AI: {e}\n\nProva a riformulare la domanda."
-    
-    def _classify_workers_by_role(self, raw_records: List[Dict]) -> Dict[str, List[Dict]]:
-        """Classifica operai per ruolo inferito dai nomi."""
-        workers_by_role = {}
-        operai_data = {}
-        
-        # Aggrega dati per operaio
-        for record in raw_records:
-            operaio = record['operaio']
-            if operaio not in operai_data:
-                operai_data[operaio] = {'ore_lavorate': 0, 'ore_straordinario': 0, 'ore_assenza': 0}
-            operai_data[operaio]['ore_lavorate'] += record['ore_lavorate']
-            operai_data[operaio]['ore_straordinario'] += record['ore_straordinario'] 
-            operai_data[operaio]['ore_assenza'] += record['ore_assenza']
-        
-        # Classifica per ruolo
-        for operaio, data in operai_data.items():
-            inferred_role = CantiereRolesKnowledge.infer_worker_role(operaio)
-            
-            if inferred_role not in workers_by_role:
-                workers_by_role[inferred_role] = []
-            
-            workers_by_role[inferred_role].append({
-                'name': operaio,
-                'total_hours': data['ore_lavorate'],
-                'overtime_hours': data['ore_straordinario'],
-                'absence_hours': data['ore_assenza']
-            })
-        
-        return workers_by_role
+            return f"❌ Errore elaborazione: {e}\n\nRiformula la domanda."
 
 def get_ai_response(chat_history: list[dict]) -> str:
     """
-    FUNZIONE PRINCIPALE - AI Assistant CapoCantiere completo e verificato.
+    FUNZIONE PRINCIPALE - AI Assistant CapoCantiere con Workflow Engine.
     
-    Features:
-    - Single Source of Truth: legge solo dati già processati
-    - Smart Question Routing: capisce l'intento delle domande
-    - Role-aware: conosce ruoli cantiere e mapping attività
-    - Anti-loop: previene risposte ripetitive infinite
-    - Error handling robusto
+    Features avanzate:
+    - Workflow-aware responses
+    - Bottleneck analysis 
+    - Resource optimization
+    - Role-based allocation
     """
     
-    # Validazione input
     if not chat_history:
         return "Nessuna domanda ricevuta."
     
     user_query = chat_history[-1]["content"].strip()
     if not user_query:
-        return "Fai una domanda sui dati del cantiere."
+        return "Fai una domanda sui dati del cantiere o sui workflow."
     
     try:
-        # 1. ANALIZZA INTENTO DELLA DOMANDA
+        # 1. ANALIZZA INTENTO
         question_intent = SmartQuestionRouter.analyze_question_intent(user_query)
-        print(f"Intent rilevato: {question_intent}")  # Debug
+        print(f"Intent rilevato: {question_intent}")
         
-        # 2. LEGGI DATI REALI DAL DATABASE (no calcoli)
+        # 2. LEGGI DATI
         presence_data = PureDataReader.read_processed_presence_data()
         schedule_data = PureDataReader.read_processed_schedule_data()
-        critical_activities = PureDataReader.get_critical_activities()
         
-        # 3. GESTIONE CASI SPECIFICI (prima dell'AI generica)
-        response_generator = IntelligentResponseGenerator()
+        # 3. GENERA RISPOSTA BASATA SU INTENTO
+        response_generator = WorkflowAwareResponseGenerator()
         
-        # CASO: Domanda specifica sui ruoli
-        if question_intent["type"] == "role_specific":
-            return response_generator.generate_role_specific_response(
+        # WORKFLOW ANALYSIS
+        if question_intent.get("wants_workflow"):
+            return response_generator.generate_workflow_response(
                 question_intent, presence_data, schedule_data
-            ) + "\n\n---\n*🎯 CapoCantiere AI - Analisi ruoli cantiere*"
+            ) + "\n\n---\n*🎯 CapoCantiere AI - Workflow Engine*"
         
-        # CASO: Richiesta di assegnazione
-        elif question_intent.get("wants_assignment", False):
-            return response_generator.generate_assignment_response(
-                question_intent, presence_data, schedule_data
-            ) + "\n\n---\n*🎯 CapoCantiere AI - Raccomandazioni strategiche*"
+        # BOTTLENECK ANALYSIS
+        elif question_intent.get("wants_bottleneck"):
+            return response_generator.generate_bottleneck_response(
+                presence_data, schedule_data
+            ) + "\n\n---\n*🎯 CapoCantiere AI - Analisi Criticità*"
         
-        # CASO: Nessun dato disponibile
+        # OPTIMIZATION
+        elif question_intent.get("wants_optimization"):
+            return response_generator.generate_optimization_response(
+                presence_data, schedule_data
+            ) + "\n\n---\n*🎯 CapoCantiere AI - Ottimizzazione Risorse*"
+        
+        # NO DATA
         elif (presence_data["status"] == "no_data" and schedule_data["status"] == "no_data"):
-            return """❌ **Nessun dato disponibile per l'analisi**
+            return """❌ **Nessun dato disponibile**
 
-🔧 **Per iniziare:**
-1. Carica il rapportino Excel delle presenze mensili
-2. Carica il cronoprogramma Excel delle attività
-3. Torna qui per analisi e raccomandazioni strategiche
-
-*I dati vengono processati automaticamente durante il caricamento.*
+Per iniziare:
+1. Carica il rapportino Excel con colonna 'Ruolo'
+2. Carica il cronoprogramma Excel
+3. Il sistema analizzerà automaticamente workflow e allocazioni
 
 ---
-*🎯 CapoCantiere AI - Sistema pronto per i tuoi dati*"""
+*🎯 CapoCantiere AI Professional - Workflow Engine Ready*"""
         
-        # 4. RISPOSTA AI GENERICA per tutte le altre domande
+        # GENERIC AI RESPONSE
         else:
+            # Prepara analisi se disponibili
+            bottleneck_analysis = None
+            if presence_data["status"] == "data_available" and schedule_data["status"] == "data_available":
+                full_analysis = analyze_resource_allocation(
+                    presence_data["raw_records"],
+                    schedule_data["raw_records"]
+                )
+                bottleneck_analysis = full_analysis.get("bottleneck_analysis")
+            
             context_data = {
                 "presence_data": presence_data,
                 "schedule_data": schedule_data,
-                "critical_activities": critical_activities,
-                "question_intent": question_intent
+                "question_intent": question_intent,
+                "bottleneck_analysis": bottleneck_analysis
             }
             
             ai_response = response_generator.generate_ai_response(user_query, context_data)
-            return ai_response + "\n\n---\n*🎯 CapoCantiere AI - Analisi su dati reali*"
+            return ai_response + "\n\n---\n*🎯 CapoCantiere AI Professional*"
         
     except Exception as e:
-        # Error handling robusto con informazioni utili
-        error_msg = f"""❌ **Errore nell'elaborazione**: {str(e)[:100]}...
+        error_msg = f"""❌ **Errore**: {str(e)[:100]}
 
-🔧 **Possibili soluzioni:**
-- Verifica che i database siano accessibili
-- Ricarica i rapportini se necessario
-- Semplifica la domanda e riprova
-- Riavvia l'applicazione se il problema persiste
-
-💡 **Domande che funzionano bene:**
-- "Situazione generale"
-- "Chi ha più assenze?"  
-- "Quanti elettricisti ho?"
-- "Cosa devo fare oggi?"
+💡 **Prova a chiedere**:
+- "Analizza il workflow per MON-001"
+- "Quali sono i colli di bottiglia?"  
+- "Come posso ottimizzare le risorse?"
+- "Mostra situazione carpentieri"
 
 ---
-*🎯 CapoCantiere AI - Errore gestito*"""
+*🎯 CapoCantiere AI - Error Recovery*"""
         
-        print(f"Errore completo in get_ai_response: {e}")  # Log per debugging
+        print(f"Errore completo: {e}")
         return error_msg

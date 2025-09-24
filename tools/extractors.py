@@ -1,4 +1,4 @@
-# tools/extractors.py - Aggiornato per i tuoi formati specifici
+# tools/extractors.py - Aggiornato con supporto per colonna Ruolo
 from __future__ import annotations
 import io
 from datetime import date
@@ -31,7 +31,6 @@ def _parse_month_year_from_header(header_string: str) -> Tuple[int, int]:
     
     # Converte il nome del mese in un numero (1-12)
     try:
-        # Fallback per i mesi italiani
         mesi = {
             'gennaio': 1, 'febbraio': 2, 'marzo': 3, 'aprile': 4, 'maggio': 5, 'giugno': 6,
             'luglio': 7, 'agosto': 8, 'settembre': 9, 'ottobre': 10, 'novembre': 11, 'dicembre': 12
@@ -49,12 +48,65 @@ def _parse_month_year_from_header(header_string: str) -> Tuple[int, int]:
         
     return month_num, year_num
 
+def normalize_role(role_str: str) -> str:
+    """
+    Normalizza i nomi dei ruoli per consistenza nel database.
+    Gestisce variazioni comuni nei nomi dei ruoli.
+    """
+    if pd.isna(role_str) or not role_str:
+        return "Non specificato"
+    
+    role_str = str(role_str).strip().lower()
+    
+    # Mapping delle variazioni comuni ai ruoli standard
+    role_mapping = {
+        'carpentiere': 'Carpentiere',
+        'carp': 'Carpentiere',
+        'aiutante carpentiere': 'Aiutante Carpentiere',
+        'aiutante carp': 'Aiutante Carpentiere',
+        'aiutante': 'Aiutante Carpentiere',
+        'saldatore': 'Saldatore',
+        'sald': 'Saldatore',
+        'welder': 'Saldatore',
+        'molatore': 'Molatore',
+        'mol': 'Molatore',
+        'grinder': 'Molatore',
+        'verniciatore': 'Verniciatore',
+        'vern': 'Verniciatore',
+        'painter': 'Verniciatore',
+        'pittore': 'Verniciatore',
+        'elettricista': 'Elettricista',
+        'elett': 'Elettricista',
+        'elettrico': 'Elettricista',
+        'tubista': 'Tubista',
+        'tub': 'Tubista',
+        'pipes': 'Tubista',
+        'meccanico': 'Meccanico',
+        'mecc': 'Meccanico',
+        'mec': 'Meccanico',
+        'montatore': 'Montatore',
+        'mont': 'Montatore',
+        'fabbricatore': 'Fabbricatore',
+        'fabb': 'Fabbricatore',
+        'fab': 'Fabbricatore'
+    }
+    
+    # Cerca corrispondenze nel mapping
+    for pattern, normalized in role_mapping.items():
+        if pattern in role_str:
+            return normalized
+    
+    # Se non trova corrispondenze, capitalizza la prima lettera
+    return role_str.capitalize()
+
 def parse_monthly_timesheet_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
     """
-    Analizza il rapportino mensile nel TUO formato specifico:
+    Analizza il rapportino mensile nel formato specifico con supporto per colonna Ruolo:
     - Riga 1: "SETTEMBRE 2025"
-    - Riga 2: "Operaio", 1, 2, 3... 30
-    - Righe successive: Nome operaio + ore per ogni giorno
+    - Riga 2: "Operaio", "Ruolo", 1, 2, 3... 30
+    - Righe successive: Nome operaio, Ruolo, ore per ogni giorno
+    
+    Il formato supporta sia con che senza colonna Ruolo per retrocompatibilità.
     """
     try:
         # Leggiamo la prima riga per estrarre mese e anno
@@ -69,17 +121,45 @@ def parse_monthly_timesheet_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
         # Leggiamo il resto del file, usando la seconda riga come intestazione
         df_data = pd.read_excel(io.BytesIO(file_bytes), header=1)
 
-        # Validazione colonne
+        # Validazione colonne obbligatorie
         if 'Operaio' not in df_data.columns:
             raise ExcelParsingError("La colonna 'Operaio' non è stata trovata (attesa in riga 2).")
+        
+        # Verifica se esiste la colonna Ruolo (nuova funzionalità)
+        has_role_column = 'Ruolo' in df_data.columns
+        
+        if has_role_column:
+            print(f"✅ Colonna 'Ruolo' trovata - lettura ruoli abilitata")
+        else:
+            print(f"ℹ️ Colonna 'Ruolo' non trovata - i ruoli verranno inferiti dai nomi")
         
         print(f"✅ Trovati {len(df_data)} operai nel rapportino")
         
         # Pulizia dati
         df_data.dropna(how='all', inplace=True)
         
+        # Prepara i dati prima del melt
+        if has_role_column:
+            # Mantieni sia Operaio che Ruolo come colonne ID
+            id_vars = ['Operaio', 'Ruolo']
+            # Normalizza i ruoli
+            df_data['Ruolo'] = df_data['Ruolo'].apply(normalize_role)
+        else:
+            # Solo Operaio come colonna ID
+            id_vars = ['Operaio']
+            # Aggiungi colonna Ruolo vuota che verrà popolata dopo
+            df_data['Ruolo'] = 'Non specificato'
+        
         # Converte da formato wide a long (una riga per ogni giorno/operaio)
-        df_melted = df_data.melt(id_vars=['Operaio'], var_name='giorno', value_name='ore')
+        # Esclude le colonne non numeriche dal melt
+        value_vars = [col for col in df_data.columns if col not in id_vars and str(col).isdigit()]
+        
+        df_melted = df_data.melt(
+            id_vars=id_vars, 
+            value_vars=value_vars,
+            var_name='giorno', 
+            value_name='ore'
+        )
         
         # Filtra solo righe con ore > 0
         df_melted.dropna(subset=['ore'], inplace=True)
@@ -93,25 +173,70 @@ def parse_monthly_timesheet_excel(file_bytes: bytes) -> List[Dict[str, Any]]:
         # Rimuove righe con dati non validi
         df_melted.dropna(subset=['giorno', 'ore'], inplace=True)
         df_melted['giorno'] = df_melted['giorno'].astype(int)
+        
+        # Se non c'è colonna Ruolo, prova a inferire dal nome (retrocompatibilità)
+        if not has_role_column:
+            print("ℹ️ Inferenza ruoli dai nomi operai...")
+            df_melted['Ruolo'] = df_melted['Operaio'].apply(infer_role_from_name)
 
-        # Creazione record finali
+        # Creazione record finali con ruolo incluso
         records = []
+        roles_found = set()
+        
         for _, row in df_melted.iterrows():
             try:
                 giorno_valido = date(year, month, row['giorno'])
+                role = row['Ruolo']
+                roles_found.add(role)
+                
                 records.append({
                     "data": giorno_valido.strftime('%Y-%m-%d'),
                     "operaio": row['Operaio'].strip(),
+                    "ruolo": role,
                     "ore": float(row['ore'])
                 })
             except ValueError:
                 print(f"⚠️ Giorno '{row['giorno']}' non valido per {month}/{year}. Riga ignorata.")
                 continue
 
-        print(f"✅ Processati {len(records)} record validi")
+        # Report sui ruoli trovati
+        if roles_found:
+            print(f"✅ Ruoli identificati: {', '.join(sorted(roles_found))}")
+        
+        print(f"✅ Processati {len(records)} record validi con informazioni sui ruoli")
         return records
 
     except Exception as e:
         if isinstance(e, ExcelParsingError):
             raise
         raise ExcelParsingError(f"Errore imprevisto durante l'analisi del rapportino: {e}")
+
+def infer_role_from_name(operaio_name: str) -> str:
+    """
+    Funzione di fallback per inferire il ruolo dal nome dell'operaio
+    quando la colonna Ruolo non è presente (retrocompatibilità).
+    """
+    if not operaio_name:
+        return "Non specificato"
+    
+    name_lower = operaio_name.lower()
+    
+    # Pattern di riconoscimento basati sui cognomi tipici per ruolo
+    # (questi sono esempi, andrebbero personalizzati per il cantiere specifico)
+    role_patterns = {
+        'Carpentiere': ['verardo', 'giacomo', 'romano', 'carpent'],
+        'Saldatore': ['rossi', 'luca', 'florin', 'roman', 'allam', 'sald'],
+        'Elettricista': ['kakhon', 'khan', 'billal', 'sarkar', 'elett'],
+        'Montatore': ['verdi', 'marco', 'bianchi', 'anna', 'mont'],
+        'Verniciatore': ['gialli', 'simone', 'vern', 'pitt'],
+        'Molatore': ['mol', 'grind'],
+        'Tubista': ['tub', 'pipe'],
+        'Meccanico': ['mecc', 'mec'],
+        'Fabbricatore': ['fabb', 'fab']
+    }
+    
+    for role, patterns in role_patterns.items():
+        if any(pattern in name_lower for pattern in patterns):
+            return role
+    
+    return "Non specificato"
