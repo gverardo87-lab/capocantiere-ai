@@ -431,10 +431,20 @@ def analyze_resource_allocation(
     """
     Analizza l'allocazione delle risorse confrontando presenze e cronoprogramma.
     """
-    # Conta lavoratori per ruolo dalle presenze
-    workers_count = {}
+    # Conta lavoratori UNICI per ruolo dalle presenze
+    unique_workers_by_role = {}
+
+    # Usiamo un set per tracciare gli operai unici (operaio, ruolo)
+    unique_workers = set()
     for record in presence_data:
+        worker_name = record.get('operaio')
         role_str = record.get('ruolo', 'Non specificato')
+        if worker_name and role_str:
+            unique_workers.add((worker_name, role_str))
+
+    # Ora contiamo gli operai per ruolo
+    workers_count = {}
+    for _, role_str in unique_workers:
         role = WorkRole.from_string(role_str)
         if role:
             workers_count[role] = workers_count.get(role, 0) + 1
