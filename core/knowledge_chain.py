@@ -17,7 +17,7 @@ import streamlit as st
 CURRENT_DIR = Path(__file__).parent
 VECTORSTORE_DIR = str(CURRENT_DIR.parent / "knowledge_base/vectorstore")
 EMBEDDING_MODEL = "nomic-embed-text"
-MAIN_LLM_MODEL = "llama3"
+MAIN_LLM_MODEL = "llama3:8b-instruct-q2_K"
 
 @st.cache_resource
 def get_knowledge_chain():
