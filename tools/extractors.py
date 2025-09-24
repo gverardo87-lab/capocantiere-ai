@@ -59,12 +59,13 @@ def normalize_role(role_str: str) -> str:
     role_str = str(role_str).strip().lower()
     
     # Mapping delle variazioni comuni ai ruoli standard
+    # L'ordine è importante: i pattern più specifici devono precedere quelli più generici
     role_mapping = {
-        'carpentiere': 'Carpentiere',
-        'carp': 'Carpentiere',
         'aiutante carpentiere': 'Aiutante Carpentiere',
         'aiutante carp': 'Aiutante Carpentiere',
         'aiutante': 'Aiutante Carpentiere',
+        'carpentiere': 'Carpentiere',
+        'carp': 'Carpentiere',
         'saldatore': 'Saldatore',
         'sald': 'Saldatore',
         'welder': 'Saldatore',
