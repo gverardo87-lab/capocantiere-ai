@@ -148,11 +148,10 @@ with tab2:
     # Selezione template
     template_type = st.selectbox(
         "Seleziona Tipo Attività",
-        options=['MON', 'FAM', 'ELE'],
+        options=['MON', 'FAM'],
         format_func=lambda x: {
             'MON': 'MON - Montaggio Scafo',
-            'FAM': 'FAM - Fuori Apparato Motore',
-            'ELE': 'ELE - Impianti Elettrici'
+            'FAM': 'FAM - Fuori Apparato Motore'
         }[x]
     )
     
