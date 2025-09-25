@@ -99,8 +99,8 @@ else:
                 activity_summary['ore_previste'] = np.busday_count(
                     activity_summary['data_inizio'].values.astype('M8[D]'),
                     activity_summary['data_fine'].values.astype('M8[D]')
-                ) * 8
-                activity_summary['ore_previste'] = activity_summary['ore_previste'].replace(0, 8)
+                ) * 20
+                activity_summary['ore_previste'] = activity_summary['ore_previste'].replace(0, 20)
 
                 activity_summary['scostamento'] = activity_summary['ore_totali'] - activity_summary['ore_previste']
                 activity_summary['perc_consumo'] = (activity_summary['ore_totali'] / activity_summary['ore_previste'] * 100).astype(int)
@@ -179,19 +179,6 @@ else:
                 "attivita_lavorate": "N° Attività"
             })
 
-    st.markdown("---")
-    st.caption(f"Dashboard generata il {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}") 
-    st.caption("Versione Enterprise con Analisi Budget e Grafico Criticità")
-    st.caption("Sviluppata da OpenAI GPT-4")
 
-# Note:
-# - La sezione di analisi del budget ora include un grafico a barre orizzontali che evidenzia le attività che hanno sforato il budget.
-# - Il calcolo delle ore previste ora utilizza numpy per considerare solo i giorni lavorativi.
-# - Migliorata la leggibilità e l'usabilità della tabella di riepilogo del budget.      
-# - Aggiunti commenti per chiarire le modifiche apportate.
-# - La tab "Consuntivo per Operaio" rimane invariata rispetto alla versione precedente.
-# - Assicurarsi che le librerie necessarie siano installate: pandas, numpy, streamlit, plotly
-# - Testare la dashboard con dati reali per verificare la correttezza delle analisi e dei grafici.
-# - Per ulteriori miglioramenti, considerare l'aggiunta di filtri avanzati o esportazione dei dati.
-
+# --- FINE FILE ---
 
