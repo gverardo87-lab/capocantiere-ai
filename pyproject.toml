@@ -1,0 +1,54 @@
+# pyproject.toml (Versione 2.0 - con package discovery)
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "capocantiere-ai"
+version = "1.0.0"
+authors = [
+  { name="G. Verardo", email="tuo.email@example.com" },
+]
+description = "Applicazione Streamlit per la gestione e l'analisi di dati di cantiere navale tramite AI."
+readme = "README.md"
+requires-python = ">=3.9"
+# Correzione licenza: usiamo il formato SPDX moderno
+license = { text = "MIT License" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Framework :: Streamlit",
+]
+dependencies = [
+    "streamlit==1.49.1",
+    "pandas==2.3.2",
+    "numpy==2.3.3",
+    "openpyxl==3.1.5",
+    "ollama==0.5.4",
+    "langchain==0.3.27",
+    "langchain-community==0.3.29",
+    "langchain-core==0.3.76",
+    "langchain-chroma==0.2.6",
+    "langchain-ollama==0.3.8",
+    "langchain-text-splitters==0.3.11",
+    "PyMuPDF==1.26.4",
+    "chromadb==1.1.0",
+    "python-dotenv==1.1.1",
+    "altair==5.5.0",
+    "plotly==6.3.0",
+    "sentence-transformers==3.0.1",
+    "setuptools",
+    "wheel",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/gverardo87-lab/capocantiere-ai"
+"Bug Tracker" = "https://github.com/gverardo87-lab/capocantiere-ai/issues"
+
+# --- NUOVA SEZIONE FONDAMENTALE ---
+[tool.setuptools.packages.find]
+# Diciamo a setuptools di cercare i pacchetti solo in queste cartelle
+where = ["."]
+include = ["core*", "server*", "tools*", "knowledge_base*"]
+exclude = ["data*", "venv*"]
