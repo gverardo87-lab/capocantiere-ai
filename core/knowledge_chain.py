@@ -1,136 +1,147 @@
-# core/knowledge_chain.py (Versione Corretta e Robusta)
+# core/knowledge_chain.py (Versione con Prompt da Ingegnere Esperto)
 
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
-# Aggiungiamo la root del progetto al path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core.config import (
+    VECTORSTORE_DIR,
+    EMBEDDING_MODEL,
+    MAIN_LLM_MODEL,
+    CROSS_ENCODER_MODEL
+)
 from langchain_community.vectorstores import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_ollama.llms import OllamaLLM
+from langchain.prompts import PromptTemplate
+from langchain_core.documents import Document
 import streamlit as st
-
-# --- CONFIGURAZIONE (invariata) ---
-CURRENT_DIR = Path(__file__).parent
-VECTORSTORE_DIR = str(CURRENT_DIR.parent / "knowledge_base/vectorstore")
-EMBEDDING_MODEL = "nomic-embed-text"
-MAIN_LLM_MODEL = "llama3"
+from sentence_transformers.cross_encoder import CrossEncoder
 
 @st.cache_resource
 def get_knowledge_chain():
-    print("--- Caricamento della Knowledge Chain in corso... (avviene solo una volta) ---")
-    if not os.path.exists(VECTORSTORE_DIR):
-        st.warning(f"Database della conoscenza non trovato. Esegui 'knowledge_base/ingest.py' per crearlo.")
-        return None, None
+    print("--- Caricamento della Knowledge Chain in corso... ---")
     try:
+        if not Path(VECTORSTORE_DIR).is_dir():
+            st.error(f"Database della conoscenza non trovato in '{VECTORSTORE_DIR}'.")
+            st.warning("Azione richiesta: Esegui lo script 'knowledge_base/ingest.py' dal terminale.")
+            return None, None
+            
         embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
-        vectorstore = Chroma(persist_directory=VECTORSTORE_DIR, embedding_function=embeddings)
-        llm = OllamaLLM(model=MAIN_LLM_MODEL)
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-        print("--- Knowledge Chain caricata con successo. ---")
+        vectorstore = Chroma(persist_directory=str(VECTORSTORE_DIR), embedding_function=embeddings)
+        retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
+        
+        # Aumentiamo leggermente la temperatura per permettere al modello di essere più "eloquente"
+        llm = OllamaLLM(model=MAIN_LLM_MODEL, temperature=0.2)
+        
+        print("--- Knowledge Chain caricata. ---")
         return retriever, llm
     except Exception as e:
         st.error(f"Errore durante l'inizializzazione della Knowledge Chain: {e}")
         return None, None
 
+@st.cache_resource
+def get_cross_encoder():
+    print("--- Caricamento del Cross-Encoder per il re-ranking... ---")
+    try:
+        encoder = CrossEncoder(CROSS_ENCODER_MODEL)
+        print("--- Cross-Encoder caricato. ---")
+        return encoder
+    except Exception as e:
+        st.error(f"Errore durante il caricamento del Cross-Encoder: {e}")
+        return None
+
+def rerank_documents(query: str, documents: List[Document], cross_encoder) -> List[Document]:
+    if not documents or cross_encoder is None:
+        return documents
+    
+    print(f"--- Riordino di {len(documents)} documenti... ---")
+    pairs = [[query, doc.page_content] for doc in documents]
+    scores = cross_encoder.predict(pairs)
+    
+    for i in range(len(documents)):
+        documents[i].metadata['relevance_score'] = scores[i]
+        
+    reranked_docs = sorted(documents, key=lambda x: x.metadata['relevance_score'], reverse=True)
+    
+    print(f"--- Documenti riordinati. Top score: {reranked_docs[0].metadata['relevance_score']:.2f} ---")
+    return reranked_docs[:4]
+
 def get_expert_response(user_query: str) -> Dict[str, Any]:
     retriever, llm = get_knowledge_chain()
-    error_response = {"answer": "Errore: La base di conoscenza non è stata caricata.", "sources": []}
-    if retriever is None or llm is None:
+    cross_encoder = get_cross_encoder()
+    
+    error_response = {"answer": "Errore: La base di conoscenza o i modelli non sono stati caricati.", "sources": []}
+    if retriever is None or llm is None or cross_encoder is None:
         return error_response
-    try:
-        docs = retriever.invoke(user_query)
-    except Exception as e:
-        return {"answer": f"Errore durante la ricerca nella base di conoscenza: {e}", "sources": []}
-    if not docs:
-        return {"answer": "Non ho trovato informazioni pertinenti.", "sources": []}
 
+    retrieved_docs = retriever.invoke(user_query)
+    if not retrieved_docs:
+        return {"answer": "Non ho trovato informazioni pertinenti nei documenti.", "sources": []}
+
+    reranked_docs = rerank_documents(user_query, retrieved_docs, cross_encoder)
+
+    context = "\n\n---\n\n".join([f"Fonte: {doc.metadata['source']}, Pagina: {doc.metadata['page']}\nContenuto: {doc.page_content}" for doc in reranked_docs])
+    
+    # --- IL NUOVO PROMPT: DA ASSISTENTE A INGEGNERE CAPO ---
+    prompt_template = """
+    **PERSONA**: Sei un Ingegnere Capo Progetto di un cantiere navale, un massimo esperto con decenni di esperienza. Il tuo compito è fornire una consulenza tecnica dettagliata, chiara e autorevole.
+
+    **OBIETTIVO**: Rispondere alla domanda dell'utente in modo esaustivo, andando oltre la semplice sintesi. Devi analizzare, sintetizzare e spiegare i concetti basandoti sulle informazioni estratte dalla documentazione tecnica fornita.
+
+    **ISTRUZIONI**:
+    1.  **Analisi Approfondita**: Leggi attentamente tutto il contesto fornito. Identifica i concetti chiave, le definizioni, le cause, gli effetti e le procedure pertinenti alla domanda.
+    2.  **Sintesi e Struttura**: Non limitarti a copiare il testo. Sintetizza e riorganizza le informazioni in una risposta logica e ben strutturata. Usa titoli (es. `### Definizione`), punti elenco e testo in grassetto per evidenziare i punti cruciali.
+    3.  **Spiegazione Dettagliata**: Quando presenti un concetto (es. "cricche a freddo"), non solo definirlo, ma spiega il "perché" e il "come" basandoti sul contesto. Fornisci dettagli tecnici rilevanti.
+    4.  **Fedeltà al Contesto**: La tua risposta deve essere **interamente supportata** dalle informazioni presenti nel contesto. Se un'informazione non è presente, dichiara esplicitamente: "La documentazione non fornisce dettagli su [argomento specifico]". NON inventare informazioni.
+    5.  **Citazioni Puntuali**: Al termine di ogni frase o punto elenco che contiene un'informazione specifica, cita la fonte con il formato `([Nome File], Pag. [Numero])`. È obbligatorio.
+    6.  **Tono Autorevole**: Usa un linguaggio professionale, preciso e sicuro, come farebbe un vero esperto del settore.
+
+    **CONTESTO ESTRATTO DALLA DOCUMENTAZIONE TECNICA**:
+    {context}
+
+    **DOMANDA DELL'UTENTE**:
+    {question}
+
+    **CONSULENZA TECNICA DETTAGLIATA**:
+    """
+    
+    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
+    chain = prompt | llm
+    
+    try:
+        final_answer = chain.invoke({"context": context, "question": user_query})
+    except Exception as e:
+        return {"answer": f"Errore durante la generazione della risposta: {e}", "sources": []}
+    
     sources = []
-    unique_sources = set()
-    for doc in docs:
-        source_name = doc.metadata.get('source', 'Fonte Sconosciuta')
-        page_num = doc.metadata.get('page', '?')
-        source_id = f"{source_name}, pag. {page_num}"
-        if source_id not in unique_sources:
-            unique_sources.add(source_id)
-            sources.append({"source": source_name, "page": page_num})
+    for doc in reranked_docs:
+        sources.append({
+            "source": doc.metadata.get('source', 'Sconosciuta'),
+            "page": doc.metadata.get('page', '?'),
+            "doc_id": doc.metadata.get('doc_id')
+        })
 
-    context = "\n\n---\n\n".join([doc.page_content for doc in docs])
-
-    # La logica "Refine" rimane invariata
-    try:
-        initial_context = docs[0].page_content
-        initial_prompt = f"""
-        CONTESTO:
-        {initial_context}
-        ---
-        DOMANDA: {user_query}
-        ---
-        Basandoti ESCLUSIVAMENTE sul contesto fornito, fornisci una risposta iniziale e dettagliata.
-        RISPOSTA INIZIALE:
-        """
-        intermediate_answer = llm.invoke(initial_prompt)
-
-        for i, doc in enumerate(docs[1:]):
-            refine_context = doc.page_content
-            refine_prompt = f"""
-            RISPOSTA ESISTENTE:
-            {intermediate_answer}
-            ---
-            NUOVE INFORMAZIONI DAL CONTESTO AGGIUNTIVO:
-            {refine_context}
-            ---
-            Basandoti sulla risposta esistente e sulle nuove informazioni, perfezionala e arricchiscila.
-            Se le nuove informazioni non aggiungono nulla di rilevante, mantieni la risposta esistente.
-            Collega le informazioni in modo logico e coerente.
-            RISPOSTA RAFFINATA:
-            """
-            intermediate_answer = llm.invoke(refine_prompt)
-        final_answer = intermediate_answer
-    except Exception as e:
-        return {"answer": f"Errore durante la generazione della risposta: {e}", "sources": sources}
+    # Le citazioni ora sono generate direttamente nel testo dall'LLM per una maggiore precisione.
     return {"answer": final_answer, "sources": sources}
 
+
 def generate_response_with_sources(llm, results, query):
-    """
-    Genera risposta con riferimenti precisi ai documenti.
-    """
-    # Estrai contesti e riferimenti
-    contexts = []
-    references = []
+    docs_with_context = [res[0] for res in results]
+    response_data = get_expert_response(query)
+    response = response_data["answer"]
     
-    for doc, doc_path in results:
-        contexts.append(doc.page_content)
-        references.append({
-            'doc_id': doc.metadata.get('doc_id'),
-            'page': doc.metadata.get('page'),
-            'content': doc.page_content,
-            'path': doc_path
-        })
+    unique_refs = {}
+    for doc in docs_with_context:
+        ref_id = f"{doc.metadata.get('doc_id')}-{doc.metadata.get('page')}"
+        if ref_id not in unique_refs:
+            unique_refs[ref_id] = {
+                'doc_id': doc.metadata.get('doc_id'),
+                'page': doc.metadata.get('page'),
+                'content': doc.page_content
+            }
     
-    # Prompt ottimizzato per risposta tecnica
-    prompt = f"""
-    Sei un esperto tecnico navale. Rispondi basandoti ESCLUSIVAMENTE 
-    sui documenti forniti. Cita sempre il documento e la pagina.
-    
-    DOMANDA: {query}
-    
-    DOCUMENTI:
-    {chr(10).join(contexts)}
-    
-    ISTRUZIONI:
-    - Rispondi in modo preciso e professionale
-    - Cita SEMPRE il documento (ID) e pagina
-    - Se non trovi info, dillo chiaramente
-    - Usa terminologia tecnica corretta
-    
-    RISPOSTA:
-    """
-    
-    # Qui chiami il tuo LLM
-    response = llm.invoke(prompt)
-    
-    return response, references
+    return response, list(unique_refs.values())

@@ -1,4 +1,4 @@
-# knowledge_base/ingest.py (Versione Sincronizzata)
+# knowledge_base/ingest.py (Versione con Chunking Semantico)
 
 import os
 import sys
@@ -14,7 +14,6 @@ try:
     from langchain_ollama import OllamaEmbeddings
     from langchain_core.documents import Document
     
-    # Importiamo la funzione per generare ID consistenti
     from core.document_manager import generate_doc_id
     print("INFO: Librerie importate correttamente.")
 except ImportError as e:
@@ -23,14 +22,12 @@ except ImportError as e:
 
 
 def extract_pages_from_pdf(pdf_path: Path) -> List[Document]:
-    """
-    Estrae le pagine da un PDF e assegna l'ID corretto ai metadati.
-    """
+    """Estrae le pagine da un PDF e assegna l'ID corretto ai metadati."""
     if not pdf_path.is_file():
         return []
 
     print(f"--- Estrazione da: {pdf_path.name} ---")
-    doc_id = generate_doc_id(pdf_path) # Genera l'ID standard
+    doc_id = generate_doc_id(pdf_path)
     
     documents = []
     try:
@@ -41,7 +38,7 @@ def extract_pages_from_pdf(pdf_path: Path) -> List[Document]:
                     documents.append(Document(
                         page_content=text,
                         metadata={
-                            "doc_id": doc_id, # Inseriamo l'ID corretto
+                            "doc_id": doc_id,
                             "source": pdf_path.name,
                             "page": page_num + 1
                         }
@@ -53,11 +50,24 @@ def extract_pages_from_pdf(pdf_path: Path) -> List[Document]:
 
 
 def split_documents(documents: List[Document]) -> List[Document]:
-    """Divide i documenti in chunk, mantenendo i metadati."""
+    """
+    MIGLIORATO: Usa una strategia di chunking più semantica, cercando di non spezzare i paragrafi.
+    """
     if not documents:
         return []
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    return text_splitter.split_documents(documents)
+    
+    print("--- Suddivisione semantica dei documenti in chunk ---")
+    
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,       # Riduciamo la dimensione per avere chunk più focalizzati
+        chunk_overlap=150,    # Aumentiamo l'overlap per mantenere il contesto tra chunk
+        length_function=len,
+        separators=["\n\n", "\n", ". ", ", ", " ", ""] # Diamo priorità a paragrafi e frasi
+    )
+    
+    chunks = text_splitter.split_documents(documents)
+    print(f"  > Documenti suddivisi in {len(chunks)} chunk totali.")
+    return chunks
 
 
 def create_and_store_embeddings(chunks: List[Document], persist_directory: str):
