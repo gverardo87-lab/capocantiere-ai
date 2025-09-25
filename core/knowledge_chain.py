@@ -17,7 +17,7 @@ import streamlit as st
 CURRENT_DIR = Path(__file__).parent
 VECTORSTORE_DIR = str(CURRENT_DIR.parent / "knowledge_base/vectorstore")
 EMBEDDING_MODEL = "nomic-embed-text"
-MAIN_LLM_MODEL = "llama3:8b-instruct-q2_K"
+MAIN_LLM_MODEL = "llama3"
 
 @st.cache_resource
 def get_knowledge_chain():
@@ -93,3 +93,44 @@ def get_expert_response(user_query: str) -> Dict[str, Any]:
     except Exception as e:
         return {"answer": f"Errore durante la generazione della risposta: {e}", "sources": sources}
     return {"answer": final_answer, "sources": sources}
+
+def generate_response_with_sources(llm, results, query):
+    """
+    Genera risposta con riferimenti precisi ai documenti.
+    """
+    # Estrai contesti e riferimenti
+    contexts = []
+    references = []
+    
+    for doc, doc_path in results:
+        contexts.append(doc.page_content)
+        references.append({
+            'doc_id': doc.metadata.get('doc_id'),
+            'page': doc.metadata.get('page'),
+            'content': doc.page_content,
+            'path': doc_path
+        })
+    
+    # Prompt ottimizzato per risposta tecnica
+    prompt = f"""
+    Sei un esperto tecnico navale. Rispondi basandoti ESCLUSIVAMENTE 
+    sui documenti forniti. Cita sempre il documento e la pagina.
+    
+    DOMANDA: {query}
+    
+    DOCUMENTI:
+    {chr(10).join(contexts)}
+    
+    ISTRUZIONI:
+    - Rispondi in modo preciso e professionale
+    - Cita SEMPRE il documento (ID) e pagina
+    - Se non trovi info, dillo chiaramente
+    - Usa terminologia tecnica corretta
+    
+    RISPOSTA:
+    """
+    
+    # Qui chiami il tuo LLM
+    response = llm.invoke(prompt)
+    
+    return response, references
