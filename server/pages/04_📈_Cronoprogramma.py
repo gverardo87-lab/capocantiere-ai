@@ -1,9 +1,9 @@
-# server/pages/04_📈_Cronoprogramma.py (Versione Definitiva Anti-Errore)
+# server/pages/04_📈_Cronoprogramma.py (Versione Definitiva e Completa)
 
 from __future__ import annotations
 import os
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -18,8 +18,20 @@ st.set_page_config(page_title="Control Room Cronoprogramma", page_icon="📈", l
 st.title("📈 Control Room Cronoprogramma")
 st.markdown("Dashboard avanzata per il monitoraggio e l'analisi delle attività di cantiere.")
 
+# --- FUNZIONE PER LA TUA LOGICA DEI COLORI ---
+def get_progress_color(progress):
+    progress = int(progress)
+    if progress >= 100:
+        return "#28a745"  # Verde (Completato)
+    elif progress >= 70:
+        return "#3B82F6"  # Azzurro (70-99%)
+    elif progress >= 50:
+        return "#EF4444"  # Rosso (50-69%)
+    else: # 0-49
+        return "#F59E0B"  # Arancione
+
 # --- LEGGE I DATI DALLA MEMORIA CENTRALE ---
-df_schedule = st.session_state.get('df_schedule', pd.DataFrame())
+df_schedule_original = st.session_state.get('df_schedule', pd.DataFrame())
 
 def process_schedule_file_on_page():
     uploaded_file = st.session_state.get("cronoprogramma_uploader")
@@ -27,99 +39,145 @@ def process_schedule_file_on_page():
         try:
             records = parse_schedule_excel(uploaded_file.getvalue())
             schedule_db_manager.update_schedule(records)
-            # Segnala alla Home Page che deve ricaricare tutto
-            st.session_state['force_rerun'] = True
+            st.session_state['force_rerun'] = True # Segnala alla Home Page che deve ricaricare tutto
+            st.toast("✅ Cronoprogramma importato!", icon="📈")
         except Exception as e:
             st.error(f"Errore durante l'elaborazione del file: {e}")
 
-# --- UPLOADER ---
-with st.expander("➕ Carica un nuovo file di Cronoprogramma"):
-    st.file_uploader(
-        "Seleziona file Excel del cronoprogramma",
-        type=["xlsx"],
-        key="cronoprogramma_uploader",
-        on_change=process_schedule_file_on_page
-    )
-
-if df_schedule.empty:
+if df_schedule_original.empty:
+    with st.expander("➕ Carica un nuovo file di Cronoprogramma"):
+        st.file_uploader("Seleziona file Excel", type=["xlsx"], key="cronoprogramma_uploader", on_change=process_schedule_file_on_page)
     st.warning("Nessun dato del cronoprogramma trovato. Carica un file per iniziare.")
 else:
-    # --- GESTIONE DATE CORRETTA E DEFINITIVA ---
-    # 1. Convertiamo in Timestamp di Pandas. Questo è il formato per i CALCOLI.
+    df_schedule = df_schedule_original.copy()
     df_schedule['data_inizio'] = pd.to_datetime(df_schedule['data_inizio'])
     df_schedule['data_fine'] = pd.to_datetime(df_schedule['data_fine'])
-    
-    # 2. Per il filtro dell'interfaccia utente, usiamo l'oggetto .date
-    min_date_filter = df_schedule['data_inizio'].min().date()
-    date_from_filter = st.date_input("Mostra attività a partire da:", min_date_filter)
-    
-    # 3. Filtriamo confrontando le parti 'date' dei nostri Timestamp
-    df_schedule_filtered = df_schedule[df_schedule['data_fine'].dt.date >= date_from_filter].copy()
 
-    st.header(f"Analisi dal {date_from_filter.strftime('%d/%m/%Y')}")
+    # --- PANNELLO DI CONTROLLO CON BOTTONE "APPLICA" ---
+    st.subheader("Pannello di Controllo")
+    with st.container(border=True):
+        c1, c2, c3 = st.columns([1, 1, 2])
+        min_date_filter = df_schedule['data_inizio'].min().date()
+        max_date_filter = df_schedule['data_fine'].max().date()
+
+        if 'cron_date_from' not in st.session_state or st.session_state.cron_date_from < min_date_filter:
+            st.session_state.cron_date_from = min_date_filter
+        if 'cron_date_to' not in st.session_state or st.session_state.cron_date_to > max_date_filter:
+            st.session_state.cron_date_to = max_date_filter
+
+        with c1:
+            date_from = st.date_input("Da data", st.session_state.cron_date_from, min_value=min_date_filter, max_value=max_date_filter)
+        with c2:
+            date_to = st.date_input("A data", st.session_state.cron_date_to, min_value=min_date_filter, max_value=max_date_filter)
+
+        with c3:
+            st.write("")
+            st.write("")
+            if st.button("Applica Filtri", type="primary", use_container_width=True):
+                st.session_state.cron_date_from = date_from
+                st.session_state.cron_date_to = date_to
+                st.rerun()
+
+    # --- FILTRAGGIO DATI BASATO SUI VALORI IN SESSIONE ---
+    df_filtered = df_schedule[
+        (df_schedule['data_inizio'].dt.date <= st.session_state.cron_date_to) &
+        (df_schedule['data_fine'].dt.date >= st.session_state.cron_date_from)
+    ].copy()
+
+    st.header(f"Analisi dal {st.session_state.cron_date_from.strftime('%d/%m/%Y')} al {st.session_state.cron_date_to.strftime('%d/%m/%Y')}")
     st.divider()
 
-    def get_status(progress):
-        progress = int(progress)
-        if progress >= 100: return "Completato"
-        elif progress > 0: return "In Corso"
-        else: return "Non Iniziato"
-    df_schedule_filtered['stato'] = df_schedule_filtered['stato_avanzamento'].apply(get_status)
+    if df_filtered.empty:
+        st.info("Nessuna attività trovata nell'intervallo di date selezionato.")
+    else:
+        # --- PREPARAZIONE DATI PER IL GRAFICO E KPI ---
+        def get_status(p): return "Completato" if int(p) >= 100 else "In Corso" if int(p) > 0 else "Non Iniziato"
+        df_filtered['stato'] = df_filtered['stato_avanzamento'].apply(get_status)
 
-    st.subheader("Metriche Chiave (KPIs)")
-    total_activities = len(df_schedule_filtered)
-    status_counts = df_schedule_filtered['stato'].value_counts()
-    completed = status_counts.get("Completato", 0)
-    in_progress = status_counts.get("In Corso", 0)
-    not_started = status_counts.get("Non Iniziato", 0)
-    
-    # --- CALCOLO DURATA CORRETTO E DEFINITIVO ---
-    # 4. Usiamo .dt.days sui Timedelta risultanti. Ora FUNZIONA.
-    df_schedule_filtered['durata'] = (df_schedule_filtered['data_fine'] - df_schedule_filtered['data_inizio']).dt.days + 1
-    total_days = df_schedule_filtered['durata'].sum()
-    weighted_progress = (df_schedule_filtered['stato_avanzamento'] * df_schedule_filtered['durata']).sum() / total_days if total_days > 0 else 0
-
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Totale Attività", f"{total_activities}")
-    kpi2.metric("✅ Completate", f"{completed}", f"{round(completed/total_activities*100)}%" if total_activities > 0 else "0%")
-    kpi3.metric("⏳ In Corso", f"{in_progress}", f"{round(in_progress/total_activities*100)}%" if total_activities > 0 else "0%")
-    kpi4.metric("📅 Non Iniziate", f"{not_started}", f"{round(not_started/total_activities*100)}%" if total_activities > 0 else "0%")
-    
-    st.progress(int(weighted_progress), text=f"Avanzamento Medio Ponderato: {weighted_progress:.1f}%")
-    st.divider()
-
-    st.subheader("Diagramma di Gantt Dettagliato")
-    df_schedule_filtered['etichetta_avanzamento'] = df_schedule_filtered['stato_avanzamento'].astype(str) + '%'
-    color_map = {"Completato": "#28a745", "In Corso": st.get_option("theme.primaryColor"), "Non Iniziato": "#6c757d"}
-    
-    # Il grafico viene creato usando le colonne Timestamp, che è corretto.
-    fig = px.timeline(
-        df_schedule_filtered, x_start="data_inizio", x_end="data_fine", 
-        y="descrizione", color="stato", text="etichetta_avanzamento", 
-        color_discrete_map=color_map, height=max(400, len(df_schedule_filtered) * 35)
-    )
-    
-    fig.update_yaxes(autorange="reversed") # Le attività più recenti in alto
-    fig.update_traces(textposition='inside', insidetextanchor='middle')
-    fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
-    st.plotly_chart(fig, use_container_width=True)
-    st.divider()
-    st.subheader("Dettaglio Attività")
-    st.dataframe(df_schedule_filtered.drop(columns=['etichetta_avanzamento', 'durata']), use_container_width=True)  
-    st.markdown(f"**Totale Attività Visualizzate:** {len(df_schedule_filtered)}")
-# --- INIZIALIZZAZIONE DATI ALL'AVVIO DELL'APP (Versione Definitiva Anti-Errore) ---
-def initialize_data():
-    if not st.session_state.get('data_loaded', False):
-        schedule_data = schedule_db_manager.get_schedule_data()
-        st.session_state.df_schedule = pd.DataFrame(schedule_data) if schedule_data else pd.DataFrame()
+        # --- GANTT CHART CON NUOVA LOGICA STABILE ---
+        st.subheader("Gantt Chart Interattivo con Avanzamento")
         
-        st.session_state.data_loaded = True
-        st.session_state['force_rerun'] = False
-# Esegui la funzione di caricamento all'avvio dell'app
-initialize_data()
-# Controlla se una sotto-pagina ha richiesto un refresh
-if st.session_state.pop('force_rerun', False):
-    st.session_state.pop('data_loaded', None)
-    initialize_data() # Forza il ricaricamento dei dati
-    st.rerun()  
+        gantt_data = []
+        for _, row in df_filtered.iterrows():
+            desc = row['descrizione']
+            start = row['data_inizio']
+            end = row['data_fine']
+            progress = row['stato_avanzamento']
+            
+            # Calcolo corretto della data di fine del progresso
+            duration = (end - start).total_seconds()
+            if duration > 0:
+                progress_end_date = start + timedelta(seconds=(duration * (progress / 100)))
+            else:
+                progress_end_date = start
 
+            # Segmento AVANZAMENTO (con il colore personalizzato)
+            if progress > 0:
+                gantt_data.append(dict(Task=desc, Start=start, Finish=progress_end_date, Segmento=f'Avanzamento', Color=get_progress_color(progress), Progress=progress))
+            # Segmento RIMANENTE (sempre grigio)
+            if progress < 100:
+                gantt_data.append(dict(Task=desc, Start=progress_end_date, Finish=end, Segmento='Rimanente', Color='rgba(108, 117, 125, 0.5)', Progress=progress))
+            # Se un'attività è a 0%, disegna solo la barra grigia per l'intera durata
+            if progress == 0:
+                gantt_data.append(dict(Task=desc, Start=start, Finish=end, Segmento='Rimanente', Color='rgba(108, 117, 125, 0.5)', Progress=progress))
+
+        if gantt_data:
+            df_gantt = pd.DataFrame(gantt_data)
+            
+            fig = px.timeline(
+                df_gantt,
+                x_start="Start", x_end="Finish", y="Task",
+                color="Color",
+                custom_data=['Progress']
+            )
+            
+            # Forziamo Plotly a usare i colori esatti che gli passiamo
+            fig.for_each_trace(lambda t: t.update(name=t.name.split("=")[-1]))
+            
+            fig.update_traces(hovertemplate="<b>%{y}</b><br>Progresso: %{customdata[0]}%<extra></extra>")
+            fig.update_layout(
+                height=max(400, len(df_filtered['descrizione'].unique()) * 35),
+                yaxis_title=None, xaxis_title="Linea del Tempo",
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor=st.get_option("theme.secondaryBackgroundColor"),
+                font_color=st.get_option("theme.textColor"),
+                showlegend=False,
+                xaxis_type='date'
+            )
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Nessuna attività da visualizzare nel grafico.")
+            
+        st.divider()
+
+        # --- KPI E TABELLA DETTAGLIO (CODICE COMPLETO) ---
+        st.subheader("Metriche Chiave e Dettaglio")
+
+        total_tasks = len(df_filtered)
+        completed = len(df_filtered[df_filtered['stato'] == 'Completato'])
+        in_progress = len(df_filtered[df_filtered['stato'] == 'In Corso'])
+        oggi = pd.Timestamp.now(tz=df_filtered['data_inizio'].dt.tz)
+        delayed = len(df_filtered[
+            ((df_filtered['stato'] == 'In Corso') & (df_filtered['data_fine'] < oggi)) |
+            ((df_filtered['stato'] == 'Non Iniziato') & (df_filtered['data_inizio'] < oggi))
+        ])
+
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1.metric("Totale Attività", total_tasks)
+        kpi2.metric("✅ Completate", completed, f"{round(completed/total_tasks*100) if total_tasks > 0 else 0}%")
+        kpi3.metric("⏳ In Corso", in_progress, f"{round(in_progress/total_tasks*100) if total_tasks > 0 else 0}%")
+        kpi4.metric("🚨 In Ritardo", delayed, delta_color="inverse")
+
+        with st.expander("Mostra dettaglio tabellare"):
+            st.dataframe(
+                df_filtered, use_container_width=True, hide_index=True,
+                column_config={
+                    "data_inizio": st.column_config.DateColumn("Data Inizio", format="DD/MM/YYYY"),
+                    "data_fine": st.column_config.DateColumn("Data Fine", format="DD/MM/YYYY"),
+                    "stato_avanzamento": st.column_config.ProgressColumn("Avanzamento", format="%d%%")
+                }
+            )
+
+    # --- UPLOADER IN FONDO ALLA PAGINA ---
+    with st.expander("➕ Carica un nuovo file di Cronoprogramma", expanded=False):
+        st.file_uploader("Seleziona file", type=["xlsx"], key="cronoprogramma_uploader_bottom", on_change=process_schedule_file_on_page)
