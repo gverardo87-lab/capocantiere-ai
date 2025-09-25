@@ -1,145 +1,117 @@
-# server/app.py (versione potenziata e strutturata)
+# server/app.py (Versione Stabile con Caricamento Centralizzato e Grafica Intatta)
 
 from __future__ import annotations
 import os
 import sys
 import streamlit as st
+import pandas as pd
 
-# Aggiungiamo la root del progetto al path per trovare i nostri moduli
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Importiamo i nostri motori: il db_manager e l'estrattore Excel
 from core.db import db_manager
+from core.schedule_db import schedule_db_manager
 from tools.extractors import parse_monthly_timesheet_excel, ExcelParsingError
 
-# --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(
-    page_title="🏗️ CapoCantiere AI - Home",
+    page_title="🏗️ CapoCantiere AI",
     page_icon="🏗️",
     layout="wide",
-    initial_sidebar_state="expanded" # Sidebar aperta di default
+    initial_sidebar_state="expanded"
 )
 
-def process_uploaded_file():
+# --- FUNZIONE DI CARICAMENTO DATI CENTRALIZZATA ---
+def initialize_data():
     """
-    Funzione centrale che gestisce il file Excel caricato.
-    Chiama l'estrattore, poi il gestore del DB, e fornisce feedback all'utente.
-    (LOGICA INVARIATA)
+    Carica tutti i dati necessari dai DB e li salva in session_state.
+    Viene eseguita solo una volta per sessione o dopo un upload/cancellazione.
     """
-    uploaded_file = st.session_state.get("file_uploader")
-    if uploaded_file is None:
-        return
-
-    file_bytes = uploaded_file.getvalue()
-    filename = uploaded_file.name
-
-    with st.spinner(f"Elaborazione di '{filename}'..."):
-        try:
-            records = parse_monthly_timesheet_excel(file_bytes)
-            
-            if not records:
-                st.warning("Il file è stato letto, ma non sono state trovate ore lavorate da importare.")
-                return
-
-            db_manager.update_monthly_timesheet(records)
-            
-            st.success(f"Rapportino '{filename}' importato! {len(records)} record di presenze sono stati salvati.")
-            st.info("Vai alla pagina 'Reportistica' per visualizzare i dati aggiornati.")
+    if 'data_loaded' not in st.session_state:
+        print("--- Inizializzazione dati per l'applicazione ---")
+        presence_data = db_manager.get_all_presence_data()
+        st.session_state.df_presence = pd.DataFrame(presence_data) if presence_data else pd.DataFrame()
         
-        except ExcelParsingError as e:
-            st.error(f"❌ Errore nel formato del file Excel: {e}")
+        schedule_data = schedule_db_manager.get_schedule_data()
+        st.session_state.df_schedule = pd.DataFrame(schedule_data) if schedule_data else pd.DataFrame()
+        
+        st.session_state.data_loaded = True
+
+# Esegui la funzione di caricamento all'avvio dell'app
+initialize_data()
+
+# Controlla se una sotto-pagina ha richiesto un refresh
+if st.session_state.pop('force_rerun', False):
+    st.session_state.pop('data_loaded', None)
+    initialize_data() # Forza il ricaricamento dei dati
+    st.rerun()
+
+# --- FUNZIONI DI GESTIONE FILE (nella Sidebar) ---
+def process_uploaded_file():
+    uploaded_file = st.session_state.get("file_uploader")
+    if uploaded_file is None: return
+    
+    with st.spinner(f"Elaborazione di '{uploaded_file.name}'..."):
+        try:
+            records = parse_monthly_timesheet_excel(uploaded_file.getvalue())
+            if records:
+                db_manager.update_monthly_timesheet(records)
+                st.session_state['force_rerun'] = True # Segnala che serve un refresh
         except Exception as e:
-            st.error(f"Si è verificato un errore imprevisto: {e}")
+            st.error(f"Errore durante l'elaborazione del file: {e}")
 
 def delete_all_data():
-    """ 
-    Funzione per cancellare tutti i dati delle presenze.
-    (LOGICA INVARIATA)
-    """
-    try:
-        db_manager.delete_all_presenze()
-        st.success("Tutti i dati delle presenze sono stati cancellati.")
-    except Exception as e:
-        st.error(f"Errore durante la cancellazione dei dati: {e}")
+    db_manager.delete_all_presenze()
+    st.session_state['force_rerun'] = True # Segnala che serve un refresh
 
-# --- SIDEBAR (Potenziata) ---
+# --- SIDEBAR (Grafica Intatta) ---
 with st.sidebar:
-    # Puoi personalizzare l'URL dell'icona se preferisci
     st.image("https://img.icons8.com/plasticine/100/000000/crane-hook.png", width=80)
     st.title("🏗️ CapoCantiere AI")
     st.markdown("---")
     
     with st.expander("➕ **Carica Rapportino Mensile**", expanded=True):
         st.file_uploader(
-            "Seleziona un file Excel",
-            type=["xlsx"],
-            label_visibility="collapsed",
-            key="file_uploader",
-            on_change=process_uploaded_file,
-            help="Carica il file Excel con le presenze del mese."
+            "Seleziona un file Excel", type=["xlsx"],
+            label_visibility="collapsed", key="file_uploader",
+            on_change=process_uploaded_file
         )
     
     st.markdown("---")
     st.header("⚙️ Azioni di Sistema")
-    if st.button("⚠️ Svuota Archivio Presenze", type="secondary", use_container_width=True, help="ATTENZIONE: Cancella tutti i dati!"):
-        delete_all_data()
-        st.rerun()
+    if st.button("⚠️ Svuota Archivio Presenze", on_click=delete_all_data, type="secondary", use_container_width=True):
+        pass
 
-# --- PAGINA PRINCIPALE (Dashboard di Benvenuto) ---
+# --- PAGINA PRINCIPALE (Dashboard di Benvenuto - Grafica Intatta) ---
 st.title("Benvenuto in CapoCantiere AI")
 st.markdown("La tua **piattaforma centralizzata** per la gestione intelligente del cantiere navale.")
 st.divider()
 
-# --- CARD RIASSUNTIVE ---
 col1, col2, col3 = st.columns(3)
-
 with col1:
     with st.container(border=True):
         st.subheader("📊 Reportistica")
-        st.markdown("Analizza le **presenze** del personale, filtra per operaio e visualizza i totali di ore lavorate, straordinari e assenze.")
-        st.page_link("pages/01_📊_Reportistica.py", label="Vai ai Report", icon="📊")
-
+        st.markdown("Analizza le **presenze** del personale, filtra per attività e visualizza i totali di ore lavorate.")
+        st.page_link("pages/01_📊_Reportistica.py", label="Vai al Consuntivo", icon="📊")
 with col2:
     with st.container(border=True):
         st.subheader("📈 Cronoprogramma")
-        st.markdown("Visualizza il **diagramma di Gantt** delle attività, monitora l'avanzamento e filtra per intervalli di date specifiche.")
+        st.markdown("Visualizza il **diagramma di Gantt** delle attività, monitora l'avanzamento e i KPI di progetto.")
         st.page_link("pages/04_📈_Cronoprogramma.py", label="Visualizza Gantt", icon="📈")
-
 with col3:
     with st.container(border=True):
         st.subheader("⚙️ Analisi Workflow")
-        st.markdown("Ottimizza l'**allocazione delle risorse**, identifica i colli di bottiglia e ricevi suggerimenti basati sui workflow.")
+        st.markdown("Ottimizza l'**allocazione delle risorse**, identifica i colli di bottiglia e ricevi suggerimenti.")
         st.page_link("pages/05_⚙️_Workflow_Analysis.py", label="Analizza Workflow", icon="⚙️")
-
 st.divider()
 
-# --- SEZIONE ASSISTENTI AI ---
 st.header("🤖 I Tuoi Assistenti AI")
 col_chat, col_expert = st.columns(2)
-
 with col_chat:
     with st.container(border=True):
         st.subheader("👨‍🔧 Esperto Tecnico")
-        st.markdown("Poni domande complesse sulla **documentazione tecnica**. L'AI risponderà citando le fonti esatte dai manuali PDF.")
+        st.markdown("Poni domande complesse sulla **documentazione tecnica**. L'AI risponderà citando le fonti esatte.")
         st.page_link("pages/03_👨‍🔧_Esperto_Tecnico.py", label="Interroga l'Esperto", icon="👨‍🔧")
-
 with col_expert:
     with st.container(border=True):
         st.subheader("📚 Esplora Documenti")
-        st.markdown("Naviga e visualizza l'**archivio documentale** tecnico (PDF) che costituisce la base di conoscenza del tuo esperto AI.")
+        st.markdown("Naviga e visualizza l'**archivio documentale** tecnico (PDF) del tuo esperto AI.")
         st.page_link("pages/06_📚_Document_Explorer.py", label="Esplora Archivio", icon="📚")
-
-
-# --- NUOVA SEZIONE PER L'ESECUZIONE (per pyproject.toml) ---
-def main():
-    """
-    Funzione principale per servire come "entry point" per il comando 
-    definito in pyproject.toml.
-    """
-    pass
-
-if __name__ == "__main__":
-    # Questo blocco viene eseguito solo se lanci il file direttamente.
-    # L'avvio corretto avviene tramite `streamlit run server/app.py`.
-    print("Per avviare l'applicazione, esegui dal terminale:")
-    print("streamlit run server/app.py")
