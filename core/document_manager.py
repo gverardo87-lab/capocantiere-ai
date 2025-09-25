@@ -1,191 +1,81 @@
-# core/document_manager.py
+# core/document_manager.py (Nuova versione "Scanner")
 from pathlib import Path
-import shutil
-import json
-from datetime import datetime
-from typing import Dict, List, Optional
 import hashlib
+from typing import Dict, List, Optional
+import streamlit as st
+
+# La cartella 'documents' è la nostra unica fonte di verità.
+DOCUMENTS_ROOT = Path("./knowledge_base/documents")
+
+def generate_doc_id(file_path: Path) -> str:
+    """
+    Crea un ID stabile e univoco basato sul nome del file.
+    In questo modo, sia l'ingestione che il manager usano lo stesso ID.
+    """
+    s = str(file_path.name).encode('utf-8')
+    return f"DOC-{hashlib.md5(s).hexdigest()[:8].upper()}"
 
 class NavalDocumentManager:
     """
-    Gestore documenti con struttura da cantiere navale.
-    Semplice ma rigoroso.
+    Gestore che "scannerizza" la cartella 'knowledge_base/documents'
+    e crea un indice in memoria dei file trovati.
+    NON gestisce più un suo archivio separato.
     """
     
-    def __init__(self, base_path: Path = Path("./naval_archive")):
+    def __init__(self, base_path: Path = DOCUMENTS_ROOT):
         self.base_path = base_path
-        self._init_structure()
-        self.index_file = self.base_path / "index.json"
-        self.index = self._load_index()
+        self.index = self._scan_and_index()
     
-    def _init_structure(self):
-        """Crea struttura cartelle standard cantieristica."""
-        # Struttura principale per disciplina
-        disciplines = [
-            "HULL",      # Scafo
-            "MACH",      # Machinery
-            "ELEC",      # Electrical
-            "HVAC",      # Heating, Ventilation, AC
-            "PIPE",      # Piping
-            "OUTF",      # Outfitting
-            "PAINT",     # Painting
-            "GENERAL"    # Documenti generali
-        ]
-        
-        # Sottocartelle per tipo documento
-        doc_types = [
-            "SPEC",      # Specifiche
-            "DWG",       # Disegni
-            "PROC",      # Procedure
-            "CALC",      # Calcoli
-            "CERT",      # Certificati
-            "ITP",       # Inspection Test Plans
-            "MANUAL"     # Manuali
-        ]
-        
-        for discipline in disciplines:
-            for doc_type in doc_types:
-                folder = self.base_path / discipline / doc_type
-                folder.mkdir(parents=True, exist_ok=True)
-    
-    def register_document(
-        self, 
-        file_path: Path,
-        discipline: str,
-        doc_type: str,
-        metadata: Dict
-    ) -> str:
+    def _scan_and_index(self) -> Dict[str, Dict]:
         """
-        Registra e archivia un documento con metadati completi.
-        Ritorna l'ID univoco del documento.
+        Analizza la cartella dei documenti e costruisce un indice.
         """
-        # Genera ID univoco ma leggibile
-        # Es: "HULL-DWG-2024-001"
-        doc_id = self._generate_doc_id(discipline, doc_type)
+        index = {}
+        if not self.base_path.is_dir():
+            st.error(f"La cartella dei documenti non esiste: {self.base_path.resolve()}")
+            return {}
+
+        # Cerca tutti i file PDF, anche in sottocartelle
+        for file_path in self.base_path.rglob("*.pdf"):
+            doc_id = generate_doc_id(file_path)
+            index[doc_id] = {
+                "id": doc_id,
+                "original_name": file_path.name,
+                "path": str(file_path.resolve()), # Usiamo percorsi assoluti per robustezza
+                "size_bytes": file_path.stat().st_size,
+                # Questi campi non sono più rilevanti ma li teniamo per compatibilità con la UI
+                "discipline": "Generale",
+                "doc_type": "PDF",
+                "registered_date": file_path.stat().st_mtime
+            }
         
-        # Calcola hash per deduplicazione
-        file_hash = self._calculate_file_hash(file_path)
-        
-        # Controlla duplicati
-        if self._is_duplicate(file_hash):
-            print(f"⚠️ Documento già presente con hash {file_hash}")
-            return self._get_doc_by_hash(file_hash)
-        
-        # Copia file nella struttura
-        target_dir = self.base_path / discipline / doc_type
-        target_path = target_dir / f"{doc_id}_{file_path.name}"
-        shutil.copy2(file_path, target_path)
-        
-        # Aggiorna indice
-        doc_entry = {
-            "id": doc_id,
-            "original_name": file_path.name,
-            "path": str(target_path.relative_to(self.base_path)),
-            "discipline": discipline,
-            "doc_type": doc_type,
-            "hash": file_hash,
-            "size_bytes": file_path.stat().st_size,
-            "registered_date": datetime.now().isoformat(),
-            "metadata": metadata
-        }
-        
-        self.index[doc_id] = doc_entry
-        self._save_index()
-        
-        print(f"✅ Documento registrato: {doc_id}")
-        return doc_id
+        return index
     
     def search_documents(
         self,
         query: str = None,
-        discipline: str = None,
-        doc_type: str = None,
-        metadata_filters: Dict = None
+        discipline: str = None, # Filtri non più usati ma mantenuti per firma
+        doc_type: str = None
     ) -> List[Dict]:
-        """Ricerca documenti con filtri multipli."""
-        results = []
+        """
+        Ricerca documenti nell'indice in memoria.
+        """
+        # Se la query è vuota, restituisce tutti i documenti
+        if not query:
+            results = list(self.index.values())
+        else:
+            query_lower = query.lower()
+            results = [
+                doc for doc in self.index.values()
+                if query_lower in doc['original_name'].lower() or query_lower in doc['id'].lower()
+            ]
         
-        for doc_id, doc in self.index.items():
-            # Filtro per disciplina
-            if discipline and doc['discipline'] != discipline:
-                continue
-            
-            # Filtro per tipo
-            if doc_type and doc['doc_type'] != doc_type:
-                continue
-            
-            # Ricerca testuale nel nome e metadati
-            if query:
-                query_lower = query.lower()
-                searchable = [
-                    doc['original_name'].lower(),
-                    doc['id'].lower(),
-                    json.dumps(doc.get('metadata', {})).lower()
-                ]
-                if not any(query_lower in s for s in searchable):
-                    continue
-            
-            # Filtri sui metadati
-            if metadata_filters:
-                doc_meta = doc.get('metadata', {})
-                match = all(
-                    doc_meta.get(k) == v 
-                    for k, v in metadata_filters.items()
-                )
-                if not match:
-                    continue
-            
-            results.append(doc)
-        
-        return sorted(results, key=lambda x: x['registered_date'], reverse=True)
+        return sorted(results, key=lambda x: x['original_name'])
     
     def get_document_path(self, doc_id: str) -> Optional[Path]:
-        """Ottiene il path completo del documento."""
+        """
+        Ottiene il percorso completo del documento dall'indice.
+        """
         if doc_id in self.index:
-            relative_path = self.index[doc_id]['path']
-            full_path = self.base_path / relative_path
-            if full_path.exists():
-                return full_path
+            return Path(self.index[doc_id]['path'])
         return None
-    
-    def _generate_doc_id(self, discipline: str, doc_type: str) -> str:
-        """Genera ID progressivo per documento."""
-        year = datetime.now().year
-        prefix = f"{discipline}-{doc_type}-{year}"
-        
-        # Trova il numero progressivo
-        existing = [
-            doc_id for doc_id in self.index.keys()
-            if doc_id.startswith(prefix)
-        ]
-        
-        if existing:
-            numbers = [
-                int(doc_id.split('-')[-1]) 
-                for doc_id in existing
-            ]
-            next_num = max(numbers) + 1
-        else:
-            next_num = 1
-        
-        return f"{prefix}-{next_num:03d}"
-    
-    def _calculate_file_hash(self, file_path: Path) -> str:
-        """Calcola SHA-256 del file."""
-        sha256_hash = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
-    
-    def _load_index(self) -> Dict:
-        """Carica indice documenti."""
-        if self.index_file.exists():
-            with open(self.index_file, 'r') as f:
-                return json.load(f)
-        return {}
-    
-    def _save_index(self):
-        """Salva indice documenti."""
-        with open(self.index_file, 'w') as f:
-            json.dump(self.index, f, indent=2)
