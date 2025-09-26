@@ -1,4 +1,4 @@
-# pyproject.toml (Versione 2.0 - con package discovery)
+# pyproject.toml (Versione 5.0 - Build Stabile per Windows)
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -13,7 +13,6 @@ authors = [
 description = "Applicazione Streamlit per la gestione e l'analisi di dati di cantiere navale tramite AI."
 readme = "README.md"
 requires-python = ">=3.9"
-# Correzione licenza: usiamo il formato SPDX moderno
 license = { text = "MIT License" }
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -21,34 +20,39 @@ classifiers = [
     "Framework :: Streamlit",
 ]
 dependencies = [
-    "streamlit==1.49.1",
-    "pandas==2.3.2",
-    "numpy==2.3.3",
-    "openpyxl==3.1.5",
+    # --- CORE LIBS (Stabili) ---
+    "streamlit==1.36.0",
+    "pandas==2.2.2",
+    "numpy==1.26.4",
+    "openpyxl==3.1.2",
+    "python-dotenv==1.0.1",
+    "plotly==5.22.0",
+
+    # --- LANGCHAIN ECOSYSTEM (Strategia Stabile) ---
+    "langchain==0.2.5",
+    "langchain-community",
+    "langchain-core",
+    "langchain-chroma",
+    "langchain-ollama",
+    "langchain-text-splitters",
+
+    # --- RAG & AI LIBS (Stabili e Compatibili con Windows Build) ---
     "ollama==0.5.4",
-    "langchain==0.3.27",
-    "langchain-community==0.3.29",
-    "langchain-core==0.3.76",
-    "langchain-chroma==0.2.6",
-    "langchain-ollama==0.3.8",
-    "langchain-text-splitters==0.3.11",
-    "PyMuPDF==1.26.4",
-    "chromadb==1.1.0",
-    "python-dotenv==1.1.1",
-    "altair==5.5.0",
-    "plotly==6.3.0",
-    "sentence-transformers==3.0.1",
-    "setuptools",
-    "wheel",
+    "PyMuPDF==1.24.1",
+    "chromadb==0.4.24", # <-- MODIFICA CHIAVE per evitare la compilazione C++
+    "torch==2.3.0",
+    "transformers==4.41.2",
+    "sentence-transformers==2.7.0",
+    "scikit-learn==1.5.0",
+    "joblib==1.4.2",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/gverardo87-lab/capocantiere-ai"
 "Bug Tracker" = "https://github.com/gverardo87-lab/capocantiere-ai/issues"
 
-# --- NUOVA SEZIONE FONDAMENTALE ---
 [tool.setuptools.packages.find]
-# Diciamo a setuptools di cercare i pacchetti solo in queste cartelle
 where = ["."]
 include = ["core*", "server*", "tools*", "knowledge_base*"]
 exclude = ["data*", "venv*"]
+

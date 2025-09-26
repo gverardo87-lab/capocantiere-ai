@@ -1,14 +1,14 @@
-# server/pages/05_⚙️_Workflow_Analysis.py (Versione Stabile e Completa)
+# server/pages/05_⚙️_Workflow_Analysis.py (VERSIONE FINALE - CORRETTA)
 
 from __future__ import annotations
 import os
 import sys
-from datetime import datetime
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 
+# Assicura che i moduli custom siano importabili
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from core.workflow_engine import (
     workflow_engine,
@@ -35,7 +35,9 @@ with tab1:
     if not presence_data or not schedule_data:
         st.warning("⚠️ Dati insufficienti. Carica un rapportino dalla Home e un cronoprogramma per abilitare l'analisi.")
     else:
+        # Esegui l'analisi una sola volta
         analysis = analyze_resource_allocation(presence_data, schedule_data)
+        
         st.subheader("Panoramica Strategica")
         total_workers = sum(analysis['workers_by_role'].values()) if analysis.get('workers_by_role') else 0
         bottlenecks = analysis['bottleneck_analysis']['bottlenecks']
@@ -51,8 +53,8 @@ with tab1:
         col_dist, col_bottle = st.columns(2)
         with col_dist:
             st.subheader("Distribuzione Risorse per Ruolo")
-            if analysis['workers_by_role']:
-                roles_df = pd.DataFrame([{'Ruolo': role, 'Numero Operai': count} for role, count in analysis['workers_by_role'].items()])
+            if analysis.get('workers_by_role'):
+                roles_df = pd.DataFrame(list(analysis['workers_by_role'].items()), columns=['Ruolo', 'Numero Operai'])
                 fig = px.treemap(roles_df, path=['Ruolo'], values='Numero Operai', color='Numero Operai', color_continuous_scale='Blues', title="Operai Disponibili per Ruolo")
                 fig.update_layout(margin=dict(t=50, l=25, r=25, b=25))
                 st.plotly_chart(fig, use_container_width=True)
@@ -60,14 +62,23 @@ with tab1:
             st.subheader("Analisi Colli di Bottiglia")
             if bottlenecks:
                 bottleneck_df = pd.DataFrame(bottlenecks)
+                # Funzione per colorare le righe in base alla severità
                 def highlight_severity(row):
                     color = ''
-                    if row.severity == 'CRITICO': color = '#8B0000'
-                    elif row.severity == 'ALTO': color = '#FF8C00'
+                    if row.severity == 'CRITICO': color = 'rgba(255, 0, 0, 0.3)' # Rosso con trasparenza
+                    elif row.severity == 'ALTO': color = 'rgba(255, 165, 0, 0.3)' # Arancione con trasparenza
                     return [f'background-color: {color}' for _ in row]
-                st.dataframe(bottleneck_df.style.apply(highlight_severity, axis=1), use_container_width=True, hide_index=True,
-                             column_config={"role": "Ruolo Richiesto", "severity": "Criticità", "demand_hours": st.column_config.NumberColumn("Ore Richieste", format="%.0f h"),
-                                            "available_workers": "Operai Disp.", "shortage_hours": st.column_config.NumberColumn("Carenza Ore", format="%.0f h")})
+                
+                st.dataframe(
+                    bottleneck_df.style.apply(highlight_severity, axis=1),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "role": "Ruolo Richiesto", "severity": "Criticità",
+                        "demand_hours": st.column_config.NumberColumn("Ore Richieste", format="%.0f h"),
+                        "available_workers": "Operai Disp.",
+                        "shortage_hours": st.column_config.NumberColumn("Carenza Ore", format="%.0f h")
+                    }
+                )
             else:
                 st.success("✅ Nessun collo di bottiglia rilevato.")
 
@@ -82,8 +93,18 @@ with tab2:
         fig = go.Figure()
         colors = px.colors.qualitative.Plotly
         for i, phase in phases_df.iterrows():
-            fig.add_trace(go.Bar(y=[phase['role']], x=[phase['end'] - phase['start']], base=[phase['start']], orientation='h', name=phase['role'], marker=dict(color=colors[i % len(colors)]), text=f"{phase['start']}% → {phase['end']}%", textposition='inside', insidetextanchor='middle'))
-        fig.update_layout(title_text=f"Fasi Workflow per attività di tipo {template_type}", xaxis_title="Percentuale di Completamento Attività (%)", yaxis_title="Ruolo Coinvolto", barmode='stack', yaxis={'categoryorder':'total ascending'}, showlegend=False, plot_bgcolor=st.get_option("theme.secondaryBackgroundColor"), paper_bgcolor='rgba(0,0,0,0)', font_color=st.get_option("theme.textColor"), xaxis=dict(range=[0, 100]))
+            fig.add_trace(go.Bar(
+                y=[phase['role']], x=[phase['end'] - phase['start']], base=[phase['start']],
+                orientation='h', name=phase['role'], marker=dict(color=colors[i % len(colors)]),
+                text=f"{phase['start']}% → {phase['end']}%", textposition='inside', insidetextanchor='middle'
+            ))
+        fig.update_layout(
+            title_text=f"Fasi Workflow per attività di tipo {template_type}",
+            xaxis_title="Percentuale di Completamento Attività (%)", yaxis_title="Ruolo Coinvolto",
+            barmode='stack', yaxis={'categoryorder':'total ascending'}, showlegend=False,
+            plot_bgcolor=st.get_option("theme.secondaryBackgroundColor"), paper_bgcolor='rgba(0,0,0,0)',
+            font_color=st.get_option("theme.textColor"), xaxis=dict(range=[0, 100])
+        )
         st.plotly_chart(fig, use_container_width=True)
         is_valid, errors = workflow_info['validation']
         if is_valid:
@@ -94,6 +115,7 @@ with tab2:
 with tab3:
     st.subheader("Azioni Consigliate per Ottimizzare l'Allocazione")
     if presence_data and schedule_data:
+        # Esegui la funzione una sola volta
         suggestions = workflow_engine.suggest_optimal_schedule(schedule_data, presence_data)
         if suggestions:
             st.info(f"Trovati **{len(suggestions)}** suggerimenti. Ecco i più importanti:")
@@ -103,12 +125,15 @@ with tab3:
                     col_action, col_workers = st.columns(2)
                     with col_action:
                         st.markdown(f"**Azione:** `{suggestion['action']}`")
-                        if 'next_phase_role' in suggestion: st.markdown(f"**Prossima Fase:** Iniziare lavoro del **{suggestion['next_phase_role']}**")
-                        if 'required_roles' in suggestion: st.markdown(f"**Ruoli Richiesti:** {', '.join(suggestion['required_roles'])}")
+                        if 'next_phase_role' in suggestion and suggestion['next_phase_role'] != 'N/A':
+                            st.markdown(f"**Prossima Fase:** Iniziare lavoro del **{suggestion['next_phase_role']}**")
+                        if 'required_roles' in suggestion:
+                            st.markdown(f"**Ruoli Richiesti:** {', '.join(suggestion['required_roles'])}")
                     with col_workers:
                         if suggestion['workers_assigned']:
                             st.markdown("**Operai Consigliati:**")
-                            for worker in suggestion['workers_assigned']: st.markdown(f"- 👷 {worker['name']} ({worker['role']})")
+                            for worker in suggestion['workers_assigned']:
+                                st.markdown(f"- 👷 {worker['name']} ({worker['role']})")
                         else:
                             st.warning("⚠️ Nessun operaio disponibile con il ruolo richiesto.")
         else:
