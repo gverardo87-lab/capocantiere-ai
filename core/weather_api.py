@@ -1,87 +1,107 @@
-# core/weather_api.py (Versione Definitiva con Logica e Link Corretti)
+# core/weather_api.py (Versione Definitiva - Mare ripristinato, Meteo corretto)
 import requests
 import pandas as pd
 from datetime import datetime
 import os
 from dotenv import load_dotenv
 
-# Carica le variabili dal file .env
 load_dotenv()
-
-# Leggi la chiave API dall'ambiente
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
 GEOCODING_API_URL = "http://api.openweathermap.org/geo/1.0/direct"
-WEATHER_API_URL = "https://api.openweathermap.org/data/2.5/forecast"
+WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
+MARINE_API_URL = "https://marine-api.open-meteo.com/v1/marine"
+
+def get_weather_description(code: int) -> tuple[str, str]:
+    """Traduce il WMO WeatherCode in una descrizione e un'icona."""
+    wmo_codes = {
+        0: ("Sereno", "☀️"), 1: ("Prevalentemente sereno", "🌤️"), 2: ("Parzialmente nuvoloso", "⛅"),
+        3: ("Nuvoloso", "☁️"), 45: ("Nebbia", "🌫️"), 48: ("Nebbia con brina", "🌫️"),
+        51: ("Pioggerella leggera", "💧"), 53: ("Pioggerella moderata", "💧"), 55: ("Pioggerella intensa", "💧"),
+        61: ("Pioggia leggera", "🌧️"), 63: ("Pioggia moderata", "🌧️"), 65: ("Pioggia forte", "🌧️"),
+        71: ("Nevicata leggera", "🌨️"), 73: ("Nevicata moderata", "🌨️"), 75: ("Nevicata pesante", "🌨️"),
+        80: ("Rovescio leggero", "🌦️"), 81: ("Rovescio moderato", "🌦️"), 82: ("Rovescio violento", "🌦️"),
+        95: ("Temporale", "⛈️"), 96: ("Temporale con grandine", "⛈️"), 99: ("Temporale con grandine", "⛈️")
+    }
+    return wmo_codes.get(code, ("Non disponibile", "❓"))
 
 def get_coords_for_city(city_name: str) -> tuple[float, float, str] | None:
-    """Converte un nome di città in coordinate (lat, lon)."""
-    if not OPENWEATHER_API_KEY:
-        print("ERRORE: Manca la chiave API di OpenWeatherMap")
-        return None
-        
+    if not OPENWEATHER_API_KEY: return None
     params = {"q": city_name, "limit": 1, "appid": OPENWEATHER_API_KEY}
     try:
-        response = requests.get(GEOCODING_API_URL, params=params)
+        response = requests.get(GEOCODING_API_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if data and isinstance(data, list) and len(data) > 0:
+            return data[0]["lat"], data[0]["lon"], f"{data[0].get('name', '')}, {data[0].get('country', '')}"
+        return None
+    except Exception: return None
+
+def get_weather_forecast(latitude: float, longitude: float) -> dict | None:
+    """Ottiene le previsioni meteo generali (funzione CORRETTA)."""
+    params = {
+        "latitude": latitude, "longitude": longitude,
+        "daily": "weathercode,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_sum,precipitation_probability_max,windspeed_10m_max,windgusts_10m_max",
+        "hourly": "temperature_2m,precipitation_probability,weathercode,windspeed_10m",
+        "timezone": "Europe/Rome"
+    }
+    try:
+        response = requests.get(WEATHER_API_URL, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
         
-        # --- CORREZIONE CRUCIALE QUI ---
-        # Controlliamo se la lista 'data' non è vuota prima di accedere a un elemento.
-        if data and isinstance(data, list) and len(data) > 0:
-            result = data[0]
-            return result["lat"], result["lon"], f"{result.get('name', '')}, {result.get('country', '')}"
+        df_daily = pd.DataFrame(data['daily'])
+        df_daily['Data'] = pd.to_datetime(df_daily['time'])
+        desc, icon = zip(*df_daily['weathercode'].apply(get_weather_description))
+        df_daily['Descrizione'] = desc
+        df_daily['Icona'] = icon
+        df_daily.rename(columns={
+            "temperature_2m_max": "Temp. Max (°C)", "temperature_2m_min": "Temp. Min (°C)",
+            "uv_index_max": "Indice UV Max", "precipitation_sum": "Precipitazioni (mm)",
+            "precipitation_probability_max": "Prob. Pioggia (%)", "windspeed_10m_max": "Vento (km/h)",
+            "windgusts_10m_max": "Raffica (km/h)"
+        }, inplace=True)
+
+        df_hourly = pd.DataFrame(data['hourly'])
+        df_hourly['Ora'] = pd.to_datetime(df_hourly['time'])
+        df_hourly.rename(columns={
+            "temperature_2m": "Temp. (°C)", "precipitation_probability": "Prob. Pioggia (%)",
+            "windspeed_10m": "Vento (km/h)"
+        }, inplace=True)
         
-        # Se la lista è vuota, significa che la città non è stata trovata.
-        print(f"Città '{city_name}' non trovata dalla API.")
-        return None
-
+        return {"daily": df_daily, "hourly": df_hourly}
     except Exception as e:
-        print(f"Errore durante la ricerca della città (Geocoding): {e}")
+        print(f"ERRORE CRITICO in get_weather_forecast: {e}")
         return None
 
-def get_weather_forecast(latitude: float, longitude: float) -> pd.DataFrame | None:
-    """Ottiene le previsioni per 5 giorni."""
-    if not OPENWEATHER_API_KEY: return None
+def get_marine_forecast(latitude: float, longitude: float) -> pd.DataFrame | None:
+    """Ottiene le previsioni marine (funzione RIPRISTINATA E FUNZIONANTE)."""
     params = {
-        "lat": latitude, "lon": longitude, "appid": OPENWEATHER_API_KEY,
-        "units": "metric", "lang": "it"
+        "latitude": latitude,
+        "longitude": longitude,
+        "hourly": "wave_height,wave_direction,wave_period,wind_wave_height,wind_wave_direction",
+        "timezone": "Europe/Rome"
     }
     try:
-        response = requests.get(WEATHER_API_URL, params=params)
+        response = requests.get(MARINE_API_URL, params=params)
         response.raise_for_status()
-        data = response.json().get('list', [])
+        data = response.json().get('hourly', {})
+        if not data: return None
         
-        records = []
-        for item in data:
-            records.append({
-                "Data": datetime.fromtimestamp(item['dt']),
-                "Temp (°C)": item['main']['temp'],
-                "Precipitazioni (mm)": item.get('rain', {}).get('3h', 0),
-                "Vento (km/h)": item['wind']['speed'] * 3.6,
-                "Raffica (km/h)": item['wind'].get('gust', 0) * 3.6,
-                "Descrizione": item['weather'][0]['description'].capitalize()
-            })
+        df = pd.DataFrame(data)
+        df['time'] = pd.to_datetime(df['time'])
         
-        df = pd.DataFrame(records)
-        df_daily = df.set_index('Data').resample('D').agg({
-            'Temp (°C)': 'max', 'Precipitazioni (mm)': 'sum',
-            'Vento (km/h)': 'max', 'Raffica (km/h)': 'max',
-            'Descrizione': 'first'
-        }).reset_index().fillna(method='ffill')
-        return df_daily.head(7)
+        df.rename(columns={
+            "time": "Data",
+            "wave_height": "Altezza Onde (m)",
+            "wave_direction": "Direzione Onde (°)",
+            "wave_period": "Periodo Onde (s)",
+        }, inplace=True, errors='ignore') # Ignora errori se alcune colonne non ci sono
+        
+        # Raggruppiamo per giorno, prendendo i valori massimi
+        df_daily = df.set_index('Data').resample('D').max().reset_index()
+        return df_daily
 
     except Exception as e:
-        print(f"Errore durante il recupero delle previsioni meteo: {e}")
+        print(f"Errore durante il recupero delle previsioni marine: {e}")
         return None
-
-def get_weather_maps_urls() -> dict[str, str]:
-    """Restituisce URL stabili per le mappe."""
-    # Aggiungiamo un parametro casuale per evitare che il browser usi una vecchia immagine in cache
-    cache_buster = datetime.now().strftime("%Y%m%d%H%M")
-    
-    return {
-        "isobare": f"https://www.wetterzentrale.de/maps/GFSOPEU00_0_1.png?{cache_buster}",
-        # --- NUOVO LINK, DA UN SERVIZIO METEO OLANDESE NOTO PER LA SUA STABILITÀ ---
-        "satellite": f"https://cdn.knmi.nl/knmi/images/weather/satellite/Meteosat_RGB_Europe_latest.jpg?{cache_buster}"
-    }

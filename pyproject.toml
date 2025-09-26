@@ -25,6 +25,7 @@ dependencies = [
     "pandas==2.2.2",
     "numpy==1.26.4",
     "openpyxl==3.1.2",
+    "feedparser", 
     "python-dotenv==1.0.1",
     "plotly==5.22.0",
 
