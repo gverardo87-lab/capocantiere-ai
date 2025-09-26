@@ -5,7 +5,11 @@ import os
 import sys
 import streamlit as st
 import pandas as pd
-
+# --- MODIFICA CHIAVE: IMPORTIAMO LA CONFIGURAZIONE ALL'AVVIO ---
+# Questa riga esegue il codice in core/config.py, che a sua volta
+# esegue load_dotenv() e carica la chiave API dal file .env
+import core.config
+# ----------------------------------------------------------------
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.db import db_manager
