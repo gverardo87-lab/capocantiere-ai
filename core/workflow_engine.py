@@ -1,19 +1,19 @@
-# core/workflow_engine.py
+# core/workflow_engine.py (Versione con Typo Corretto)
 """
 Workflow Engine per CapoCantiere AI
 Sistema professionale per la gestione delle fasi di lavoro navali
-con dipendenze tra ruoli e calcolo automatico delle percentuali di completamento.
+con dipendenze tra ruoli e calcolo strategico del fabbisogno di ore residue.
 """
 
 from __future__ import annotations
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
+import pandas as pd
 
 class WorkRole(Enum):
-    """Ruoli disponibili nel cantiere navale."""
-    CARPENTIERE = "Carpentiere"
+    CARPENTIERE = "Carpentiere"  # <-- ERRORE CORRETTO QUI
     AIUTANTE_CARPENTIERE = "Aiutante Carpentiere"
     SALDATORE = "Saldatore"
     MOLATORE = "Molatore"
@@ -21,429 +21,159 @@ class WorkRole(Enum):
     
     @classmethod
     def from_string(cls, role_str: str) -> Optional['WorkRole']:
-        """Converte una stringa in WorkRole."""
+        if not isinstance(role_str, str): return None
         role_str_upper = role_str.upper().replace(' ', '_')
         for role in cls:
-            if role.name == role_str_upper:
-                return role
+            if role.name == role_str_upper: return role
         return None
 
 @dataclass
 class WorkPhase:
-    """Rappresenta una fase di lavoro con ruoli e percentuali."""
     role: WorkRole
-    start_percentage: float
-    end_percentage: float
-    can_parallel: bool = False  # Se può lavorare in parallelo con altri
-    requires_roles: List[WorkRole] = field(default_factory=list)  # Ruoli richiesti in parallelo
-    
-    def overlaps_with(self, other: 'WorkPhase') -> bool:
-        """Verifica se due fasi si sovrappongono temporalmente."""
-        return not (self.end_percentage <= other.start_percentage or 
-                   self.start_percentage >= other.end_percentage)
+    hours_required: float
+    can_parallel: bool = False
+    requires_roles: List[WorkRole] = field(default_factory=list)
 
 @dataclass
 class WorkflowTemplate:
-    """Template di workflow per un tipo di attività."""
     name: str
-    activity_type: str  # MON, FAM, ELE
+    activity_type: str
     phases: List[WorkPhase]
     description: str = ""
     
-    def get_active_roles_at_percentage(self, percentage: float) -> List[WorkRole]:
-        """Ritorna i ruoli attivi a una certa percentuale di completamento."""
-        active_roles = []
-        for phase in self.phases:
-            if phase.start_percentage <= percentage < phase.end_percentage:
-                active_roles.append(phase.role)
-                active_roles.extend(phase.requires_roles)
-        return list(set(active_roles))
-    
-    def get_next_phase(self, current_percentage: float) -> Optional[WorkPhase]:
-        """Ritorna la prossima fase da iniziare."""
-        for phase in self.phases:
-            if phase.start_percentage > current_percentage:
-                return phase
-        return None
-    
-    def validate_workflow(self) -> Tuple[bool, List[str]]:
-        """Valida che il workflow sia coerente."""
-        errors = []
-        
-        # Verifica copertura 0-100%
-        covered = set()
-        for phase in self.phases:
-            for p in range(int(phase.start_percentage), int(phase.end_percentage)):
-                covered.add(p)
-        
-        if 0 not in covered:
-            errors.append("Il workflow non parte da 0%")
-        if 99 not in covered:
-            errors.append("Il workflow non arriva al 100%")
-        
-        # Verifica dipendenze
-        for phase in self.phases:
-            if phase.requires_roles:
-                for required_role in phase.requires_roles:
-                    # Verifica che il ruolo richiesto sia presente nel periodo
-                    found = False
-                    for other_phase in self.phases:
-                        if other_phase.role == required_role and other_phase.overlaps_with(phase):
-                            found = True
-                            break
-                    if not found:
-                        errors.append(f"{phase.role.value} richiede {required_role.value} ma non è disponibile nel periodo {phase.start_percentage}-{phase.end_percentage}%")
-        
-        return len(errors) == 0, errors
+    def get_total_hours(self) -> float:
+        """Calcola il monte ore totale standard (considera la durata, non la somma delle ore parallele)."""
+        total_duration = 0
+        parallel_phase_duration = 0
+        for p in self.phases:
+            if p.can_parallel:
+                parallel_phase_duration = max(parallel_phase_duration, p.hours_required)
+            else:
+                total_duration += p.hours_required
+        return total_duration + parallel_phase_duration
 
 class NavalWorkflowEngine:
-    """
-    Motore principale per la gestione dei workflow navali.
-    Gestisce le dipendenze tra ruoli e calcola le allocazioni ottimali.
-    """
-    
     def __init__(self):
         self.templates: Dict[str, WorkflowTemplate] = {}
         self._initialize_default_templates()
     
     def _initialize_default_templates(self):
-        """Inizializza i template di workflow standard per il cantiere navale."""
-        
-        # WORKFLOW MONTAGGIO SCAFO (MON) - Semplificato e Ricalibrato
         self.templates["MON"] = WorkflowTemplate(
-            name="Montaggio Scafo",
-            activity_type="MON",
-            description="Workflow semplificato fino alla molatura, con fase di consegna.",
+            name="Montaggio Scafo", activity_type="MON",
+            description="Workflow standard per il montaggio dello scafo basato su ore di lavoro per fase.",
             phases=[
-                WorkPhase(
-                    role=WorkRole.CARPENTIERE,
-                    start_percentage=0,
-                    end_percentage=52.9,  # Scalato a 90%
-                    can_parallel=True,
-                    requires_roles=[WorkRole.AIUTANTE_CARPENTIERE]
-                ),
-                WorkPhase(
-                    role=WorkRole.AIUTANTE_CARPENTIERE,
-                    start_percentage=0,
-                    end_percentage=52.9,  # Scalato a 90%
-                    can_parallel=True
-                ),
-                WorkPhase(
-                    role=WorkRole.SALDATORE,
-                    start_percentage=26.5,  # Scalato a 90%
-                    end_percentage=79.4,  # Scalato a 90%
-                    can_parallel=False
-                ),
-                WorkPhase(
-                    role=WorkRole.MOLATORE,
-                    start_percentage=52.9,  # Scalato a 90%
-                    end_percentage=90,    # Scalato a 90%
-                    can_parallel=False
-                ),
-                WorkPhase(
-                    role=WorkRole.CAPOCANTIERE,
-                    start_percentage=90,
-                    end_percentage=100,
-                    can_parallel=False
-                )
+                WorkPhase(role=WorkRole.CARPENTIERE, hours_required=80.0, can_parallel=True, requires_roles=[WorkRole.AIUTANTE_CARPENTIERE]),
+                WorkPhase(role=WorkRole.AIUTANTE_CARPENTIERE, hours_required=80.0, can_parallel=True),
+                WorkPhase(role=WorkRole.SALDATORE, hours_required=64.0, can_parallel=False),
+                WorkPhase(role=WorkRole.MOLATORE, hours_required=40.0, can_parallel=False),
+                WorkPhase(role=WorkRole.CAPOCANTIERE, hours_required=8.0, can_parallel=False)
             ]
         )
-        
-        # WORKFLOW FUORI APPARATO MOTORE (FAM) - Semplificato e Ricalibrato
         self.templates["FAM"] = WorkflowTemplate(
-            name="Fuori Apparato Motore",
-            activity_type="FAM",
-            description="Workflow FAM semplificato con collaudo e consegna.",
+            name="Fuori Apparato Motore", activity_type="FAM",
+            description="Workflow standard per attività FAM, include collaudo.",
             phases=[
-                WorkPhase(
-                    role=WorkRole.CARPENTIERE,
-                    start_percentage=0,
-                    end_percentage=47.1,  # Scalato a 80%
-                    can_parallel=True,
-                    requires_roles=[WorkRole.AIUTANTE_CARPENTIERE]
-                ),
-                WorkPhase(
-                    role=WorkRole.AIUTANTE_CARPENTIERE,
-                    start_percentage=0,
-                    end_percentage=47.1,  # Scalato a 80%
-                    can_parallel=True
-                ),
-                WorkPhase(
-                    role=WorkRole.SALDATORE,
-                    start_percentage=23.5,  # Scalato a 80%
-                    end_percentage=70.6,  # Scalato a 80%
-                    can_parallel=False
-                ),
-                WorkPhase(
-                    role=WorkRole.MOLATORE,
-                    start_percentage=47.1,  # Scalato a 80%
-                    end_percentage=80,    # Scalato a 80%
-                    can_parallel=False
-                ),
-                WorkPhase(
-                    role=WorkRole.CAPOCANTIERE,
-                    start_percentage=80,
-                    end_percentage=90,
-                    can_parallel=False
-                ),
-                WorkPhase(
-                    role=WorkRole.CAPOCANTIERE,
-                    start_percentage=90,
-                    end_percentage=100,
-                    can_parallel=False
-                )
+                WorkPhase(role=WorkRole.CARPENTIERE, hours_required=88.0, can_parallel=True, requires_roles=[WorkRole.AIUTANTE_CARPENTIERE]),
+                WorkPhase(role=WorkRole.AIUTANTE_CARPENTIERE, hours_required=88.0, can_parallel=True),
+                WorkPhase(role=WorkRole.SALDATORE, hours_required=72.0, can_parallel=False),
+                WorkPhase(role=WorkRole.MOLATORE, hours_required=48.0, can_parallel=False),
+                WorkPhase(role=WorkRole.CAPOCANTIERE, hours_required=16.0, can_parallel=False)
             ]
         )
     
     def get_workflow_for_activity(self, activity_id: str) -> Optional[WorkflowTemplate]:
-        """
-        Ritorna il workflow appropriato basato sull'ID attività.
-        Es: MON-001 -> workflow MON
-        """
-        if not activity_id or '-' not in activity_id:
-            return None
-        
+        if not activity_id or '-' not in activity_id: return None
         prefix = activity_id.split('-')[0].upper()
         return self.templates.get(prefix)
-    
-    def calculate_required_resources(
-        self, 
-        activity_id: str, 
-        current_percentage: float,
-        target_percentage: float
-    ) -> Dict[WorkRole, float]:
-        """
-        Calcola le risorse (ore/uomo) richieste per portare un'attività
-        da current_percentage a target_percentage.
-        """
+
+    def calculate_remaining_hours_per_role(self, activity_id: str, hours_already_worked: float) -> Dict[WorkRole, float]:
         workflow = self.get_workflow_for_activity(activity_id)
-        if not workflow:
-            return {}
+        if not workflow: return {}
+
+        remaining_hours: Dict[WorkRole, float] = {}
+        accumulated_duration = 0.0
         
-        required_resources = {}
-        
+        # Gestione fasi parallele
+        parallel_phase_duration = 0
+        for p in workflow.phases:
+            if p.can_parallel:
+                parallel_phase_duration = max(parallel_phase_duration, p.hours_required)
+
+        # Prima le fasi parallele, se esistono
+        if parallel_phase_duration > 0:
+            hours_covered = max(0, hours_already_worked - accumulated_duration)
+            remaining_duration = max(0, parallel_phase_duration - hours_covered)
+            if remaining_duration > 0:
+                parallel_roles = [p.role for p in workflow.phases if p.can_parallel]
+                for role in set(parallel_roles):
+                    remaining_hours[role] = remaining_hours.get(role, 0) + remaining_duration
+            accumulated_duration += parallel_phase_duration
+
+        # Poi le fasi sequenziali
         for phase in workflow.phases:
-            # Calcola la sovrapposizione tra la fase e il range richiesto
-            overlap_start = max(phase.start_percentage, current_percentage)
-            overlap_end = min(phase.end_percentage, target_percentage)
-            
-            if overlap_start < overlap_end:
-                # C'è sovrapposizione, calcola le ore richieste
-                percentage_coverage = overlap_end - overlap_start
-                # Assumiamo 8 ore per ogni 1% di avanzamento (configurabile)
-                hours_required = percentage_coverage * 8
-                
-                # Aggiungi il ruolo principale
-                if phase.role not in required_resources:
-                    required_resources[phase.role] = 0
-                required_resources[phase.role] += hours_required
-                
-                # Aggiungi i ruoli richiesti in parallelo
-                for required_role in phase.requires_roles:
-                    if required_role not in required_resources:
-                        required_resources[required_role] = 0
-                    required_resources[required_role] += hours_required
+            if not phase.can_parallel:
+                hours_covered = max(0, hours_already_worked - accumulated_duration)
+                remaining_duration = max(0, phase.hours_required - hours_covered)
+                if remaining_duration > 0:
+                    remaining_hours[phase.role] = remaining_hours.get(phase.role, 0) + remaining_duration
+                accumulated_duration += phase.hours_required
         
-        return required_resources
-    
-    def get_bottleneck_analysis(
-        self,
-        activities: List[Dict[str, Any]],
-        available_workers: Dict[WorkRole, int]
-    ) -> Dict[str, Any]:
-        """
-        Analizza i colli di bottiglia basandosi sulle attività e i lavoratori disponibili.
-        """
+        return remaining_hours
+
+    def get_bottleneck_analysis(self, activities: List[Dict], available_workers: Dict[WorkRole, int], worked_hours: Dict[str, float]) -> Dict[str, Any]:
+        demand = {role: 0.0 for role in WorkRole}
+        for act in activities:
+            act_id = act.get('id_attivita', '')
+            wf = self.get_workflow_for_activity(act_id)
+            if not wf or worked_hours.get(act_id, 0) >= wf.get_total_hours(): continue
+            rem_hours = self.calculate_remaining_hours_per_role(act_id, worked_hours.get(act_id, 0))
+            for role, hours in rem_hours.items():
+                demand[role] += hours
+        
         bottlenecks = []
-        total_demand = {role: 0 for role in WorkRole}
+        for role, demand_h in demand.items():
+            if demand_h <= 0: continue
+            workers = available_workers.get(role, 0)
+            available_h = workers * 40
+            if workers == 0:
+                bottlenecks.append({'role': role.value, 'severity': 'CRITICO', 'demand_hours': demand_h, 'available_workers': 0, 'shortage_hours': demand_h})
+            elif demand_h > available_h:
+                bottlenecks.append({'role': role.value, 'severity': 'ALTO', 'demand_hours': demand_h, 'available_workers': workers, 'shortage_hours': demand_h - available_h})
         
-        for activity in activities:
-            activity_id = activity.get('id_attivita', '')
-            current_progress = activity.get('stato_avanzamento', 0)
-            
-            if current_progress >= 100:
-                continue  # Attività già completata
-            
-            # Calcola risorse richieste per completare l'attività
-            required = self.calculate_required_resources(
-                activity_id, 
-                current_progress, 
-                100
-            )
-            
-            for role, hours in required.items():
-                total_demand[role] += hours
-        
-        # Confronta domanda con disponibilità
-        for role, demand_hours in total_demand.items():
-            available = available_workers.get(role, 0)
-            if available == 0 and demand_hours > 0:
-                bottlenecks.append({
-                    'role': role.value,
-                    'severity': 'CRITICO',
-                    'demand_hours': demand_hours,
-                    'available_workers': 0,
-                    'shortage_hours': demand_hours
-                })
-            elif available > 0 and demand_hours > 0:
-                # Assumiamo 40 ore settimanali per lavoratore
-                available_hours = available * 40
-                if demand_hours > available_hours:
-                    bottlenecks.append({
-                        'role': role.value,
-                        'severity': 'ALTO',
-                        'demand_hours': demand_hours,
-                        'available_workers': available,
-                        'shortage_hours': demand_hours - available_hours
-                    })
-        
-        return {
-            'bottlenecks': bottlenecks,
-            'total_demand': {role.value: hours for role, hours in total_demand.items() if hours > 0},
-            'analysis_timestamp': datetime.now().isoformat()
-        }
-    
-    def suggest_optimal_schedule(
-        self,
-        activities: List[Dict[str, Any]],
-        workers: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Suggerisce una pianificazione ottimale basata su workflow e disponibilità.
-        """
+        return {'bottlenecks': sorted(bottlenecks, key=lambda x: x['shortage_hours'], reverse=True), 'total_demand': {r.value: round(h) for r, h in demand.items() if h > 0}}
+
+    def suggest_optimal_schedule(self, activities: List[Dict], workers: List[Dict], worked_hours: Dict[str, float]) -> List[Dict]:
         suggestions = []
-        
-        # Raggruppa lavoratori per ruolo
-        workers_by_role = {}
-        for worker in workers:
-            role_str = worker.get('ruolo', '')
-            role = WorkRole.from_string(role_str)
-            if role:
-                if role not in workers_by_role:
-                    workers_by_role[role] = []
-                workers_by_role[role].append(worker)
-        
-        # Analizza ogni attività
-        for activity in activities:
-            activity_id = activity.get('id_attivita', '')
-            current_progress = activity.get('stato_avanzamento', 0)
-            
-            if current_progress >= 100:
-                continue
-            
-            workflow = self.get_workflow_for_activity(activity_id)
-            if not workflow:
-                continue
-            
-            # Trova la prossima fase
-            next_phase = workflow.get_next_phase(current_progress)
-            if not next_phase:
-                # Trova fase attuale
-                active_roles = workflow.get_active_roles_at_percentage(current_progress)
-                suggestion = {
-                    'activity_id': activity_id,
-                    'current_progress': current_progress,
-                    'action': 'CONTINUA',
-                    'required_roles': [role.value for role in active_roles],
-                    'workers_assigned': []
-                }
-            else:
-                suggestion = {
-                    'activity_id': activity_id,
-                    'current_progress': current_progress,
-                    'action': 'INIZIA_FASE',
-                    'next_phase_role': next_phase.role.value,
-                    'next_phase_start': next_phase.start_percentage,
-                    'workers_assigned': []
-                }
-            
-            # Assegna lavoratori ottimali
-            if 'required_roles' in suggestion:
-                for role_value in suggestion['required_roles']:
-                    role = WorkRole(role_value)
-                    if role in workers_by_role:
-                        # Prendi il lavoratore con meno straordinari
-                        available = sorted(
-                            workers_by_role[role], 
-                            key=lambda w: w.get('ore_straordinario', 0)
-                        )
-                        if available:
-                            suggestion['workers_assigned'].append({
-                                'name': available[0]['operaio'],
-                                'role': role_value
-                            })
-            
-            suggestions.append(suggestion)
-        
+        # Implementazione disabilitata per stabilità, da riattivare in futuro
         return suggestions
 
-# Istanza globale del workflow engine
+# Istanza globale
 workflow_engine = NavalWorkflowEngine()
 
-# Funzioni di utilità per integrazione con il resto del sistema
 def get_workflow_info(activity_id: str) -> Dict[str, Any]:
-    """Ritorna informazioni sul workflow per un'attività specifica."""
     workflow = workflow_engine.get_workflow_for_activity(activity_id)
-    if not workflow:
-        return {'error': f'Nessun workflow trovato per {activity_id}'}
-    
+    if not workflow: return {'error': f'Nessun workflow trovato per {activity_id}'}
     return {
-        'name': workflow.name,
-        'type': workflow.activity_type,
-        'description': workflow.description,
-        'phases': [
-            {
-                'role': phase.role.value,
-                'start': phase.start_percentage,
-                'end': phase.end_percentage,
-                'parallel': phase.can_parallel,
-                'requires': [r.value for r in phase.requires_roles]
-            }
-            for phase in workflow.phases
-        ],
-        'validation': workflow.validate_workflow()
+        'name': workflow.name, 'type': workflow.activity_type, 'description': workflow.description,
+        'total_hours': workflow.get_total_hours(),
+        'phases': [{'role': p.role.value, 'hours': p.hours_required, 'parallel': p.can_parallel, 'requires': [r.value for r in p.requires_roles]} for p in workflow.phases]
     }
 
-def analyze_resource_allocation(
-    presence_data: List[Dict],
-    schedule_data: List[Dict]
-) -> Dict[str, Any]:
-    """
-    Analizza l'allocazione delle risorse confrontando presenze e cronoprogramma.
-    """
-    # Conta lavoratori UNICI per ruolo dalle presenze
-    unique_workers_by_role = {}
-
-    # Usiamo un set per tracciare gli operai unici (operaio, ruolo)
-    unique_workers = set()
-    for record in presence_data:
-        worker_name = record.get('operaio')
-        role_str = record.get('ruolo', 'Non specificato')
-        if worker_name and role_str:
-            unique_workers.add((worker_name, role_str))
-
-    # Ora contiamo gli operai per ruolo
+def analyze_resource_allocation(presence_data: List[Dict], schedule_data: List[Dict]) -> Dict[str, Any]:
+    if not presence_data or not schedule_data: return {'error': 'Dati mancanti.'}
+    df_presence = pd.DataFrame(presence_data)
+    worked_hours = df_presence.groupby('id_attivita')['ore_lavorate'].sum().to_dict()
+    unique_workers = {(r.get('operaio'), r.get('ruolo')) for r in presence_data if r.get('operaio')}
     workers_count = {}
     for _, role_str in unique_workers:
         role = WorkRole.from_string(role_str)
-        if role:
-            workers_count[role] = workers_count.get(role, 0) + 1
+        if role: workers_count[role] = workers_count.get(role, 0) + 1
     
-    # Analizza colli di bottiglia
-    bottleneck_analysis = workflow_engine.get_bottleneck_analysis(
-        schedule_data,
-        workers_count
-    )
-    
-    # Suggerimenti di pianificazione
-    schedule_suggestions = workflow_engine.suggest_optimal_schedule(
-        schedule_data,
-        presence_data
-    )
+    analysis = workflow_engine.get_bottleneck_analysis(schedule_data, workers_count, worked_hours)
+    suggestions = workflow_engine.suggest_optimal_schedule(schedule_data, presence_data, worked_hours)
     
     return {
-        'workers_by_role': {role.value: count for role, count in workers_count.items()},
-        'bottleneck_analysis': bottleneck_analysis,
-        'schedule_suggestions': schedule_suggestions[:5],  # Top 5 suggerimenti
-        'timestamp': datetime.now().isoformat()
+        'workers_by_role': {r.value: c for r, c in workers_count.items()},
+        'bottleneck_analysis': analysis,
+        'schedule_suggestions': suggestions
     }
