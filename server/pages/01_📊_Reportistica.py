@@ -97,10 +97,10 @@ else:
                 activity_summary['data_fine'] = pd.to_datetime(activity_summary['data_fine'])
 
                 activity_summary['ore_previste'] = np.busday_count(
-                    activity_summary['data_inizio'].values.astype('M8[D]'),
-                    activity_summary['data_fine'].values.astype('M8[D]')
+                activity_summary['data_inizio'].values.astype('M8[D]'),
+                activity_summary['data_fine'].values.astype('M8[D]')
                 ) * 20
-                activity_summary['ore_previste'] = activity_summary['ore_previste'].replace(0, 20)
+                activity_summary['ore_previste'] = activity_summary['ore_previste'].replace(0, 20) # Minimo 8 ore se inizio=fine
 
                 activity_summary['scostamento'] = activity_summary['ore_totali'] - activity_summary['ore_previste']
                 activity_summary['perc_consumo'] = (activity_summary['ore_totali'] / activity_summary['ore_previste'] * 100).astype(int)
