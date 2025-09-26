@@ -82,6 +82,6 @@ def get_weather_maps_urls() -> dict[str, str]:
     
     return {
         "isobare": f"https://www.wetterzentrale.de/maps/GFSOPEU00_0_1.png?{cache_buster}",
-        # --- NUOVO LINK STABILE PER IL SATELLITE ---
-        "satellite": f"https://cdn.sat24.com/images/it/it/europa/latest.jpg?{cache_buster}"
+        # --- NUOVO LINK, DA UN SERVIZIO METEO OLANDESE NOTO PER LA SUA STABILITÀ ---
+        "satellite": f"https://cdn.knmi.nl/knmi/images/weather/satellite/Meteosat_RGB_Europe_latest.jpg?{cache_buster}"
     }
