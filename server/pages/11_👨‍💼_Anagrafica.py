@@ -1,4 +1,4 @@
-# file: server/pages/11_👨‍💼_Anagrafica.py
+# file: server/pages/11_👨‍💼_Anagrafica.py (Versione 2.0 - FIX SALVATAGGIO)
 
 from __future__ import annotations
 import os
@@ -38,7 +38,8 @@ with st.expander("➕ Aggiungi Nuovo Dipendente", expanded=False):
                 try:
                     new_id = crm_db_manager.add_dipendente(nome, cognome, ruolo)
                     st.success(f"Dipendente {nome} {cognome} (ID: {new_id}) aggiunto con successo!")
-                    st.cache_data.clear() # Pulisce la cache per aggiornare la tabella
+                    st.cache_data.clear()  # Pulisce la cache per aggiornare la tabella
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Errore durante l'inserimento: {e}")
 
@@ -48,7 +49,7 @@ st.divider()
 st.subheader("Elenco Personale")
 st.markdown("Modifica i dati direttamente nella tabella. Spunta la casella 'attivo' per rimuovere un dipendente dalle selezioni future senza cancellarlo.")
 
-@st.cache_data(ttl=60) # Cache per 60 secondi
+@st.cache_data(ttl=60)  # Cache per 60 secondi
 def get_personale_df():
     return crm_db_manager.get_dipendenti_df(solo_attivi=False)
 
@@ -63,8 +64,8 @@ try:
             df_personale,
             key="editor_personale",
             use_container_width=True,
-            num_rows="dynamic", # Permette di aggiungere/eliminare, ma lo gestiamo noi
-            disabled=["id_dipendente"], # Non far modificare l'ID
+            num_rows="fixed",  # Non permettere aggiunte/eliminazioni da qui
+            disabled=["id_dipendente"],  # Non far modificare l'ID
             column_config={
                 "id_dipendente": st.column_config.NumberColumn("ID", disabled=True),
                 "nome": st.column_config.TextColumn("Nome", required=True),
@@ -74,33 +75,30 @@ try:
             }
         )
         
-        # Logica per salvare le modifiche
-        # st.data_editor non ha un "on_submit", quindi dobbiamo confrontare i dataframe
-        # Questo è un pattern comune per salvare le modifiche
-        
-        if not edited_df.equals(df_personale):
-            # Trova le differenze (un modo semplice)
-            # Per un'app complessa, si userebbe session_state per tracciare le modifiche
-            # Ma per semplicità, ricarichiamo e applichiamo
-            st.warning("Modifiche rilevate. In attesa di applicazione...")
-            if st.button("Salva Modifiche Tabella"):
-                try:
-                    # Un modo semplice per aggiornare: confronta riga per riga
-                    # Questo è didattico, per produzioni si usa un diff più smart
-                    updates = 0
-                    for id, row in edited_df.iterrows():
-                        original_row = df_personale.loc[id]
-                        if not row.equals(original_row):
-                            for col in df_personale.columns:
-                                if row[col] != original_row[col]:
-                                    crm_db_manager.update_dipendente_from_df(id, col, row[col])
-                                    updates += 1
+        # Salva le modifiche quando l'utente clicca il pulsante
+        if st.button("Salva Modifiche Tabella", type="primary"):
+            try:
+                updates = []
+                
+                # Confronta dataframe modificato con originale
+                for id_dip in edited_df.index:
+                    for col in ['nome', 'cognome', 'ruolo', 'attivo']:
+                        if edited_df.loc[id_dip, col] != df_personale.loc[id_dip, col]:
+                            updates.append((id_dip, col, edited_df.loc[id_dip, col]))
+                
+                if not updates:
+                    st.info("Nessuna modifica rilevata")
+                else:
+                    # ✅ USA IL NUOVO METODO
+                    for id_dip, field, new_val in updates:
+                        crm_db_manager.update_dipendente_field(id_dip, field, new_val)
                     
-                    st.success(f"Aggiornamenti salvati con successo!")
-                    st.cache_data.clear() # Pulisce la cache
-                    st.rerun() # Ricarica la pagina per mostrare i dati puliti
-                except Exception as e:
-                    st.error(f"Errore durante il salvataggio: {e}")
+                    st.success(f"✅ {len(updates)} modifiche salvate!")
+                    st.cache_data.clear()  # Pulisce la cache
+                    st.rerun()  # Ricarica la pagina per mostrare i dati puliti
+                    
+            except Exception as e:
+                st.error(f"Errore durante il salvataggio: {e}")
 
 except Exception as e:
     st.error(f"Impossibile caricare l'anagrafica: {e}")

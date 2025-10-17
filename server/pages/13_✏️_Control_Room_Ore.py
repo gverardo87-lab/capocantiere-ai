@@ -1,4 +1,4 @@
-# file: server/pages/13_✏️_Control_Room_Ore.py (Versione 11.0 - Logica di Salvataggio Corretta)
+# file: server/pages/13_✏️_Control_Room_Ore.py (Versione 12.0 - LOGICA CORRETTA)
 
 from __future__ import annotations
 import os
@@ -94,65 +94,100 @@ else:
         disabled=["id_dipendente", "cognome", "nome", "ruolo", "durata_ore"]
     )
 
-    # --- MODIFICA CHIAVE: Logica di Salvataggio V11 (Robusta) ---
+    # --- LOGICA DI SALVATAGGIO CORRETTA V12 ---
     if st.button("Salva Modifiche ed Eliminazioni", type="primary"):
         try:
             original_df = st.session_state.original_df_to_compare
             eliminati_count = 0
             aggiornati_count = 0
-            errori_count = 0
-
-            # 1. Gestisci eliminazioni
-            da_eliminare_ids = edited_df[edited_df['elimina'] == True].index
-            for id_reg in da_eliminare_ids:
-                if id_reg in original_df.index: 
-                    crm_db_manager.delete_registrazione(int(id_reg))
-                    eliminati_count += 1
+            errori = []
             
-            # 2. Gestisci modifiche (SOVRASCRIVI TUTTO)
-            df_modifiche = edited_df[edited_df['elimina'] == False].drop(columns=['elimina'])
-            
-            for id_reg, edited_row in df_modifiche.iterrows():
+            # TRANSAZIONE ATOMICA
+            with crm_db_manager._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("BEGIN TRANSACTION")
+                
                 try:
-                    if id_reg not in original_df.index:
-                        continue 
+                    # 1. Eliminazioni
+                    da_eliminare_ids = edited_df[edited_df['elimina'] == True].index.tolist()
+                    for id_reg in da_eliminare_ids:
+                        cursor.execute(
+                            "DELETE FROM registrazioni_ore WHERE id_registrazione = ?", 
+                            (int(id_reg),)
+                        )
+                        eliminati_count += 1
                     
-                    # Prendi i valori direttamente dallo schermo
-                    edit_start = pd.to_datetime(edited_row['data_ora_inizio'])
-                    edit_end = pd.to_datetime(edited_row['data_ora_fine'])
+                    # 2. Modifiche (solo righe non eliminate)
+                    df_modifiche = edited_df[edited_df['elimina'] == False].copy()
                     
-                    if pd.isna(edit_start) or pd.isna(edit_end):
-                        st.warning(f"Errore riga {id_reg} ({edited_row.get('cognome', 'N/A')}): Data Inizio o Fine non valida. Riga non salvata.")
-                        errori_count += 1
-                        continue 
-
-                    # Chiamata di aggiornamento "brute force"
-                    crm_db_manager.update_full_registrazione(
-                        id_reg=int(id_reg),
-                        start_time=edit_start,
-                        end_time=edit_end,
-                        id_att=edited_row.get('id_attivita'),
-                        note=edited_row.get('note')
-                    )
-                    aggiornati_count += 1
-                        
+                    for id_reg, row in df_modifiche.iterrows():
+                        try:
+                            # ✅ VALIDAZIONE ROBUSTA
+                            start_val = row['data_ora_inizio']
+                            end_val = row['data_ora_fine']
+                            
+                            # Converti in datetime se necessario
+                            if isinstance(start_val, str):
+                                start_dt = pd.to_datetime(start_val)
+                            elif isinstance(start_val, pd.Timestamp):
+                                start_dt = start_val.to_pydatetime()
+                            else:
+                                start_dt = start_val
+                            
+                            if isinstance(end_val, str):
+                                end_dt = pd.to_datetime(end_val)
+                            elif isinstance(end_val, pd.Timestamp):
+                                end_dt = end_val.to_pydatetime()
+                            else:
+                                end_dt = end_val
+                            
+                            # ✅ CONTROLLO DATE VALIDE
+                            if pd.isna(start_dt) or pd.isna(end_dt):
+                                errori.append(f"Riga {id_reg}: Date non valide")
+                                continue
+                            
+                            if start_dt >= end_dt:
+                                errori.append(f"Riga {id_reg}: Inizio >= Fine")
+                                continue
+                            
+                            # ✅ USA IL NUOVO METODO
+                            crm_db_manager.update_full_registrazione(
+                                id_reg=int(id_reg),
+                                start_time=start_dt,
+                                end_time=end_dt,
+                                id_att=row.get('id_attivita'),
+                                note=row.get('note')
+                            )
+                            aggiornati_count += 1
+                            
+                        except ValueError as ve:
+                            errori.append(f"Riga {id_reg}: {ve}")
+                        except Exception as e:
+                            errori.append(f"Riga {id_reg}: Errore generico - {e}")
+                    
+                    # ✅ COMMIT SOLO SE TUTTO OK
+                    conn.commit()
+                    
+                    # ✅ CLEAR CACHE GLOBALE
+                    st.cache_data.clear()
+                    st.session_state.pop('original_df_to_compare', None)
+                    
+                    # FEEDBACK
+                    st.success(f"✅ {aggiornati_count} aggiornamenti, {eliminati_count} eliminazioni")
+                    
+                    if errori:
+                        with st.expander(f"⚠️ {len(errori)} righe non salvate - Clicca per dettagli"):
+                            for err in errori:
+                                st.warning(err)
+                    
+                    st.rerun()
+                    
                 except Exception as e:
-                    st.warning(f"Errore generico riga {id_reg}: {e}. Riga non salvata.")
-                    errori_count += 1
-            
-            st.success(f"Salvataggio completato! {aggiornati_count} record aggiornati, {eliminati_count} record eliminati.")
-            if errori_count > 0:
-                st.warning(f"{errori_count} righe non sono state salvate a causa di errori.")
-            
-            # Pulisci la cache di TUTTE le pagine
-            st.cache_data.clear()
-            st.session_state.pop('original_df_to_compare', None) 
-            st.rerun()
-
+                    conn.rollback()
+                    st.error(f"❌ ROLLBACK: Nessuna modifica salvata. Errore: {e}")
+                    
         except Exception as e:
-            st.error(f"Errore critico durante il salvataggio: {e}")
-            print(f"Errore salvataggio: {e}") 
-    # --- FINE MODIFICA ---
+            st.error(f"Errore critico: {e}")
 
 st.divider()
 
@@ -170,33 +205,51 @@ else:
                 orario_str = f"({row['data_ora_inizio'].strftime('%H:%M')} - {row['data_ora_fine'].strftime('%H:%M')})"
             opzioni_dipendenti[idx] = f"{row['cognome']} {row['nome']} {orario_str}"
 
-        ids_selezionati = st.multiselect("Seleziona registrazioni da splittare", options=opzioni_dipendenti.keys(), format_func=lambda x: opzioni_dipendenti.get(x, "N/A"))
+        ids_selezionati = st.multiselect(
+            "Seleziona registrazioni da splittare", 
+            options=opzioni_dipendenti.keys(), 
+            format_func=lambda x: opzioni_dipendenti.get(x, "N/A")
+        )
+        
         col1, col2 = st.columns(2)
         with col1:
             ora_inizio_interruzione = st.time_input("Ora Inizio Interruzione", time(14, 0))
         with col2:
             ora_fine_interruzione = st.time_input("Ora Fine Interruzione", time(15, 0))
+        
         submitted_interruzione = st.form_submit_button("Applica Interruzione", use_container_width=True)
         
         if submitted_interruzione:
             if not ids_selezionati:
-                st.warning("Nessuna registrazione selezionata."); st.stop()
+                st.warning("Nessuna registrazione selezionata.")
+                st.stop()
+            
             if ora_inizio_interruzione >= ora_fine_interruzione:
-                st.warning("L'ora di fine interruzione deve essere successiva all'ora di inizio."); st.stop()
+                st.warning("L'ora di fine interruzione deve essere successiva all'ora di inizio.")
+                st.stop()
             
             dt_inizio_interruzione = datetime.combine(selected_date, ora_inizio_interruzione)
             dt_fine_interruzione = datetime.combine(selected_date, ora_fine_interruzione)
-            success_count = 0; fail_count = 0
+            
+            success_count = 0
+            fail_count = 0
             
             with st.spinner("Applicazione interruzioni in corso..."):
                 for id_reg in ids_selezionati:
                     try:
-                        crm_db_manager.split_registrazione_interruzione(int(id_reg), dt_inizio_interruzione, dt_fine_interruzione)
+                        crm_db_manager.split_registrazione_interruzione(
+                            int(id_reg), 
+                            dt_inizio_interruzione, 
+                            dt_fine_interruzione
+                        )
                         success_count += 1
                     except Exception as e:
-                        st.error(f"Errore su record {id_reg}: {e}"); fail_count += 1
+                        st.error(f"Errore su record {id_reg}: {e}")
+                        fail_count += 1
             
             st.success(f"Interruzione applicata! {success_count} record splittati con successo. {fail_count} falliti.")
+            
             # Pulisci la cache di TUTTE le pagine
             st.cache_data.clear()
-            st.session_state.pop('original_df_to_compare', None); st.rerun()
+            st.session_state.pop('original_df_to_compare', None)
+            st.rerun()
