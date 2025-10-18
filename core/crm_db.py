@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 10.0 - FIX METODI MANCANTI)
+# file: core/crm_db.py (Versione 11.0 - DEFINITIVA CON FIX DATE)
 
 from __future__ import annotations
 import sqlite3
@@ -38,6 +38,7 @@ class CrmDBManager:
                 ruolo TEXT,
                 attivo BOOLEAN DEFAULT 1 NOT NULL
             )""")
+            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS squadre (
                 id_squadra INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +46,7 @@ class CrmDBManager:
                 id_caposquadra INTEGER,
                 FOREIGN KEY (id_caposquadra) REFERENCES anagrafica_dipendenti (id_dipendente)
             )""")
+            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS membri_squadra (
                 id_squadra INTEGER,
@@ -53,6 +55,7 @@ class CrmDBManager:
                 FOREIGN KEY (id_squadra) REFERENCES squadre (id_squadra) ON DELETE CASCADE,
                 FOREIGN KEY (id_dipendente) REFERENCES anagrafica_dipendenti (id_dipendente)
             )""")
+            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS turni_standard (
                 id_turno TEXT PRIMARY KEY,
@@ -61,6 +64,7 @@ class CrmDBManager:
                 ora_fine TIME NOT NULL,
                 scavalca_mezzanotte BOOLEAN NOT NULL
             )""")
+            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS registrazioni_ore (
                 id_registrazione INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,10 +76,13 @@ class CrmDBManager:
                 note TEXT,
                 FOREIGN KEY (id_dipendente) REFERENCES anagrafica_dipendenti (id_dipendente)
             )""")
+            
             conn.commit()
     
     # --- ANAGRAFICA DIPENDENTI ---
+    
     def add_dipendente(self, nome: str, cognome: str, ruolo: str) -> int:
+        """Aggiunge un nuovo dipendente all'anagrafica."""
         with self._connect() as conn:
             cursor = conn.execute(
                 "INSERT INTO anagrafica_dipendenti (nome, cognome, ruolo) VALUES (?, ?, ?)", 
@@ -85,6 +92,7 @@ class CrmDBManager:
             return cursor.lastrowid
     
     def get_dipendenti_df(self, solo_attivi: bool = False) -> pd.DataFrame:
+        """Restituisce DataFrame con tutti i dipendenti."""
         query = "SELECT id_dipendente, nome, cognome, ruolo, attivo FROM anagrafica_dipendenti"
         if solo_attivi:
             query += " WHERE attivo = 1"
@@ -96,7 +104,7 @@ class CrmDBManager:
     
     def update_dipendente_field(self, id_dipendente: int, field_name: str, new_value):
         """
-        ✅ NUOVO METODO - Aggiorna un singolo campo di un dipendente.
+        Aggiorna un singolo campo di un dipendente.
         Usato dal data_editor dell'anagrafica.
         """
         allowed_fields = ['nome', 'cognome', 'ruolo', 'attivo']
@@ -109,7 +117,9 @@ class CrmDBManager:
             conn.commit()
     
     # --- GESTIONE SQUADRE ---
+    
     def add_squadra(self, nome_squadra: str, id_caposquadra: Optional[int]) -> int:
+        """Crea una nuova squadra."""
         with self._connect() as conn:
             cursor = conn.cursor()
             try:
@@ -133,6 +143,7 @@ class CrmDBManager:
                 raise e
     
     def update_squadra_details(self, id_squadra: int, nome_squadra: str, id_caposquadra: Optional[int]):
+        """Aggiorna i dettagli di una squadra."""
         with self._connect() as conn:
             conn.execute(
                 "UPDATE squadre SET nome_squadra = ?, id_caposquadra = ? WHERE id_squadra = ?", 
@@ -141,6 +152,7 @@ class CrmDBManager:
             conn.commit()
     
     def update_membri_squadra(self, id_squadra: int, membri_ids: List[int]):
+        """Aggiorna la lista dei membri di una squadra."""
         with self._connect() as conn:
             cursor = conn.cursor()
             try:
@@ -160,16 +172,19 @@ class CrmDBManager:
                 raise e
     
     def delete_squadra(self, id_squadra: int):
+        """Elimina una squadra."""
         with self._connect() as conn:
             conn.execute("DELETE FROM squadre WHERE id_squadra = ?", (id_squadra,))
             conn.commit()
     
     def get_squadre(self) -> List[Dict[str, Any]]:
+        """Restituisce lista di tutte le squadre."""
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM squadre ORDER BY nome_squadra").fetchall()
             return [dict(row) for row in rows]
     
     def get_membri_squadra(self, id_squadra: int) -> List[int]:
+        """Restituisce lista degli ID dei membri di una squadra."""
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id_dipendente FROM membri_squadra WHERE id_squadra = ?", 
@@ -178,12 +193,15 @@ class CrmDBManager:
             return [row['id_dipendente'] for row in rows]
     
     # --- TURNI STANDARD ---
+    
     def get_turni_standard(self) -> List[Dict[str, Any]]:
+        """Restituisce lista dei turni standard."""
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM turni_standard ORDER BY nome_turno").fetchall()
             return [dict(row) for row in rows]
     
     def insert_turno_standard(self, id_turno: str, nome: str, inizio: str, fine: str, scavalca: bool):
+        """Inserisce o aggiorna un turno standard."""
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO turni_standard (id_turno, nome_turno, ora_inizio, ora_fine, scavalca_mezzanotte) VALUES (?, ?, ?, ?, ?)", 
@@ -192,10 +210,11 @@ class CrmDBManager:
             conn.commit()
     
     # --- REGISTRAZIONI ORE ---
+    
     def check_for_overlaps(self, list_of_dipendente_ids: List[int], proposed_start: datetime.datetime, proposed_end: datetime.datetime) -> List[str]:
         """
-        Controlla le sovrapposizioni.
-        Ignora i record con date nulle (corrotti).
+        Controlla se ci sono sovrapposizioni per i dipendenti specificati.
+        Ignora record con date NULL.
         """
         if not list_of_dipendente_ids:
             return []
@@ -224,6 +243,7 @@ class CrmDBManager:
             return [row['nome_completo'] for row in rows]
 
     def crea_registrazioni_batch(self, registrazioni: List[Dict[str, Any]]) -> int:
+        """Crea multiple registrazioni in una transazione."""
         if not registrazioni:
             return 0
         
@@ -244,8 +264,12 @@ class CrmDBManager:
                 raise e
     
     def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        dt_start = datetime.datetime.combine(start_date, datetime.time.min)
-        dt_end = datetime.datetime.combine(end_date, datetime.time.max)
+        """
+        ✅ FIX: Usa date() di SQLite per confronto corretto delle date.
+        """
+        # Converti in formato ISO string
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
         
         query = """
         SELECT 
@@ -260,8 +284,8 @@ class CrmDBManager:
             a.ruolo
         FROM registrazioni_ore r
         JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente
-        WHERE r.data_ora_inizio <= ? 
-          AND r.data_ora_fine >= ?
+        WHERE date(r.data_ora_inizio) <= ?
+          AND date(r.data_ora_fine) >= ?
           AND a.attivo = 1
           AND r.data_ora_inizio IS NOT NULL 
           AND r.data_ora_fine IS NOT NULL
@@ -271,14 +295,18 @@ class CrmDBManager:
             df = pd.read_sql_query(
                 query, 
                 conn, 
-                params=(dt_end, dt_start), 
+                params=(end_str, start_str),
                 parse_dates=['data_ora_inizio', 'data_ora_fine']
             )
             return df
     
     def get_registrazioni_giorno_df(self, giorno: datetime.date) -> pd.DataFrame:
-        start_day = datetime.datetime.combine(giorno, datetime.time.min)
-        end_day = datetime.datetime.combine(giorno, datetime.time.max)
+        """
+        ✅ FIX: Usa date() di SQLite per confronto corretto delle date.
+        Carica registrazioni per un giorno specifico.
+        """
+        # Converti in formato ISO string
+        giorno_str = giorno.isoformat()
         
         query = """
         SELECT 
@@ -293,8 +321,7 @@ class CrmDBManager:
             r.id_dipendente
         FROM registrazioni_ore r
         JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente
-        WHERE r.data_ora_inizio <= ? 
-          AND r.data_ora_fine >= ?
+        WHERE date(r.data_ora_inizio) = ?
           AND r.data_ora_inizio IS NOT NULL 
           AND r.data_ora_fine IS NOT NULL
         ORDER BY a.cognome, r.data_ora_inizio
@@ -304,7 +331,7 @@ class CrmDBManager:
             df = pd.read_sql_query(
                 query, 
                 conn, 
-                params=(end_day, start_day), 
+                params=(giorno_str,),
                 parse_dates=['data_ora_inizio', 'data_ora_fine']
             )
         
@@ -316,7 +343,7 @@ class CrmDBManager:
     def update_full_registrazione(self, id_reg: int, start_time: datetime.datetime, 
                                    end_time: datetime.datetime, id_att: str, note: str):
         """
-        ✅ NUOVO METODO - Aggiorna completamente una registrazione esistente.
+        Aggiorna completamente una registrazione esistente.
         INCLUDE validazione sovrapposizioni ESCLUDENDO se stessa.
         """
         if not id_reg or not start_time or not end_time:
@@ -385,6 +412,7 @@ class CrmDBManager:
             conn.commit()
 
     def delete_registrazione(self, id_registrazione: int):
+        """Elimina una registrazione."""
         with self._connect() as conn:
             conn.execute(
                 "DELETE FROM registrazioni_ore WHERE id_registrazione = ?", 
@@ -393,6 +421,7 @@ class CrmDBManager:
             conn.commit()
             
     def split_registrazione_interruzione(self, id_registrazione: int, start_interruzione: datetime.datetime, end_interruzione: datetime.datetime):
+        """Splitta una registrazione in due per inserire un'interruzione."""
         with self._connect() as conn:
             cursor = conn.cursor()
             try:
@@ -439,6 +468,7 @@ class CrmDBManager:
 
 # --- Setup Dati Iniziali ---
 def setup_initial_data():
+    """Popola i turni standard se il database è vuoto."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM turni_standard")
