@@ -1,63 +1,44 @@
+# core/logic.py (Versione 3.0 - Blindata per Buste Paga)
+
 from __future__ import annotations
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Optional
+import pandas as pd
 
-def calculate_worked_hours(start_time: str | None, end_time: str | None, break_duration_hours: float) -> float:
+def calculate_duration_hours(start_time: Optional[datetime], end_time: Optional[datetime]) -> float:
     """
-    Calcola le ore lavorate da un orario di inizio e fine, sottraendo una pausa.
-
-    Args:
-        start_time: Orario di inizio nel formato "HH:MM".
-        end_time: Orario di fine nel formato "HH:MM".
-        break_duration_hours: Durata della pausa in ore (es. 1.0 per un'ora).
-
-    Returns:
-        Le ore lavorate come numero decimale. Ritorna 0.0 se gli orari non sono validi.
+    Calcola le ore lavorate da due oggetti datetime completi.
+    Questa è la funzione centralizzata e unica fonte di verità per
+    il calcolo della durata, a prova di turni notturni.
     """
-    if not start_time or not end_time:
+    # Se manca uno dei due valori, la durata è 0
+    if not start_time or not end_time or pd.isna(start_time) or pd.isna(end_time):
         return 0.0
 
-    try:
-        # Usiamo un formato standard per il parsing.
-        # La data (1900-01-01) è irrilevante, serve solo per creare oggetti datetime validi.
-        start_dt = datetime.strptime(start_time, "%H:%M")
-        end_dt = datetime.strptime(end_time, "%H:%M")
-    except ValueError:
-        # Se il formato dell'ora non è valido, ritorna 0 ore e non sollevare un'eccezione
-        print(f"ATTENZIONE: Formato ora non valido rilevato. Inizio: '{start_time}', Fine: '{end_time}'")
+    # Assicuriamoci che siano oggetti datetime
+    if not isinstance(start_time, datetime) or not isinstance(end_time, datetime):
+        # Potrebbe succedere se il DB ritorna stringhe o Timestamp di Pandas
+        try:
+            start_time = pd.to_datetime(start_time).to_pydatetime()
+            end_time = pd.to_datetime(end_time).to_pydatetime()
+        except Exception:
+            return 0.0 # Non riusciamo a parsare
+
+    # L'orario di fine deve essere dopo l'inizio
+    if end_time < start_time:
+        print(f"ATTENZIONE: Trovato orario di fine precedente all'inizio. Inizio: {start_time}, Fine: {end_time}")
         return 0.0
-
-    # Gestisce i casi in cui il turno finisce il giorno dopo (es. 22:00 - 06:00)
-    if end_dt < start_dt:
-        end_dt += timedelta(days=1)
-
+    
     # Calcola la durata totale in ore
-    duration_in_seconds = (end_dt - start_dt).total_seconds()
+    duration_in_seconds = (end_time - start_time).total_seconds()
     total_hours = duration_in_seconds / 3600
+    
+    # Come da richiesta, questo è il totale.
+    # Ritardi o ore in più sono gestiti modificando start_time/end_time
+    # nella "Control Room", ma il calcolo matematico rimane questo.
+    return round(total_hours, 2)
 
-    # Sottrae la pausa e si assicura che il risultato non sia negativo
-    worked_hours = max(0, total_hours - break_duration_hours)
-
-    return round(worked_hours, 2)
-
-
-def split_hours(total_hours: float, threshold: float = 8.0) -> dict[str, float]:
-    """
-    Suddivide le ore totali in ore regolari, straordinari e assenze.
-
-    Args:
-        total_hours: Le ore totali lavorate.
-        threshold: La soglia giornaliera di ore lavorative.
-
-    Returns:
-        Un dizionario con "regular", "overtime" e "absence".
-    """
-    if total_hours > threshold:
-        regular_hours = threshold
-        overtime_hours = total_hours - threshold
-        absence_hours = 0.0
-    else:
-        regular_hours = total_hours
-        overtime_hours = 0.0
-        absence_hours = threshold - total_hours
-
-    return {"regular": round(regular_hours, 2), "overtime": round(overtime_hours, 2), "absence": round(absence_hours, 2)}
+#
+# --- LOGICA STRAORDINARI E ASSENZE RIMOSSA ---
+# Il file ora contiene solo il calcolo puro della durata.
+#

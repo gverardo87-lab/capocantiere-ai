@@ -1,4 +1,4 @@
-# file: server/pages/01_📊_Reportistica.py (Versione CRM)
+# file: server/pages/01_📊_Reportistica.py (Versione CRM 3.0 - Midnight-Split-Aware)
 
 from __future__ import annotations
 import os
@@ -15,13 +15,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 try:
     from core.crm_db import crm_db_manager
     from core.schedule_db import schedule_db_manager
+    # --- IMPORTA LA FONTE DI VERITÀ ---
+    from core.logic import calculate_duration_hours
+    # ---------------------------------
 except ImportError:
-    st.error("Errore critico: Impossibile importare i moduli del database (crm_db, schedule_db).")
+    st.error("Errore critico: Impossibile importare i moduli del database (crm_db, schedule_db, logic).")
     st.stop()
 
 st.set_page_config(page_title="Consuntivo Ore Lavorate", page_icon="📊", layout="wide")
 st.title("📊 Consuntivo Ore Lavorate")
-st.markdown("Dashboard di analisi aggregata delle ore inserite tramite il CRM.")
+st.markdown("Dashboard di analisi aggregata delle ore per la contabilità giornaliera (buste paga).")
 
 # --- 1. CARICAMENTO DATI E FILTRI ---
 
@@ -72,18 +75,27 @@ if date_from > date_to:
 # --- 2. ESECUZIONE QUERY E CALCOLO DATI ---
 try:
     with st.spinner("Caricamento e aggregazione dati in corso..."):
-        # Esegui la query principale
+        # Esegui la query (ora semplificata, basata su "Midnight Split")
         df_raw_report = crm_db_manager.get_report_data_df(date_from, date_to)
 
         if df_raw_report.empty:
             st.warning("Nessuna registrazione trovata nell'intervallo di date selezionato.")
             st.stop()
         
+        # --- CALCOLO DURATA ---
+        # Calcoliamo la durata qui, usando la nostra FONTE DI VERITÀ
+        # Questo ora calcola la durata dei segmenti splittati (es. 4h e 6h)
+        df_raw_report['durata_ore'] = df_raw_report.apply(
+            lambda row: calculate_duration_hours(row['data_ora_inizio'], row['data_ora_fine']),
+            axis=1
+        )
+        # -----------------------
+
         # Arricchisci i dati
         df_raw_report['desc_attivita'] = df_raw_report['id_attivita'].apply(map_activity_id)
         
         # --- Aggregazioni ---
-        # 1. Per Dipendente
+        # 1. Per Dipendente (Per Busta Paga)
         df_dipendente = df_raw_report.groupby(['dipendente_nome', 'ruolo'])['durata_ore'].sum().reset_index()
         df_dipendente = df_dipendente.sort_values(by="durata_ore", ascending=False).rename(columns={'durata_ore': 'Ore Totali'})
         
@@ -92,6 +104,9 @@ try:
         df_attivita = df_attivita.sort_values(by="durata_ore", ascending=False).rename(columns={'durata_ore': 'Ore Totali'})
         
         # 3. Per Andamento Giornaliero
+        # --- MODIFICA CHIAVE ---
+        # Ora raggruppiamo per 'data_ora_inizio'.date() che è garantito
+        # essere il giorno corretto di competenza contabile.
         df_raw_report['giorno'] = df_raw_report['data_ora_inizio'].dt.date
         df_giornaliero = df_raw_report.groupby('giorno')['durata_ore'].sum().reset_index()
         
@@ -117,13 +132,13 @@ st.divider()
 col_chart, col_table = st.columns([1, 1])
 
 with col_chart:
-    st.subheader("Andamento Ore Giornaliere")
+    st.subheader("Andamento Ore Giornaliere (per Competenza)")
     fig = px.line(
         df_giornaliero, 
         x='giorno', 
         y='durata_ore',
-        title="Totale Ore Lavorate per Giorno",
-        labels={'giorno': 'Data', 'durata_ore': 'Ore Totali'}
+        title="Totale Ore Lavorate per Giorno (00:00-00:00)",
+        labels={'giorno': 'Data di Competenza', 'durata_ore': 'Ore Totali'}
     )
     fig.update_traces(mode='lines+markers', line_shape='spline')
     st.plotly_chart(fig, use_container_width=True)
@@ -145,7 +160,7 @@ st.divider()
 col_dip, col_raw = st.columns(2)
 
 with col_dip:
-    st.subheader("Ore per Dipendente")
+    st.subheader("Ore per Dipendente (per Busta Paga)")
     st.dataframe(
         df_dipendente,
         use_container_width=True,
@@ -158,15 +173,15 @@ with col_dip:
     )
 
 with col_raw:
-    st.subheader("Dettaglio Registrazioni")
-    with st.expander("Mostra tutte le registrazioni grezze (per verifica)"):
+    st.subheader("Dettaglio Segmenti di Lavoro")
+    with st.expander("Mostra tutti i segmenti (per verifica)"):
         st.dataframe(
             df_raw_report.sort_values(by="data_ora_inizio"),
             use_container_width=True,
             hide_index=True,
             column_config={
-                "data_ora_inizio": "Inizio",
-                "data_ora_fine": "Fine",
+                "data_ora_inizio": "Inizio Segmento",
+                "data_ora_fine": "Fine Segmento",
                 "durata_ore": "Ore",
                 "desc_attivita": "Attività",
                 "dipendente_nome": "Dipendente"
