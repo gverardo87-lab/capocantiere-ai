@@ -1,4 +1,4 @@
-# file: server/pages/11_👨‍💼_Anagrafica.py (Versione 2.0 - FIX SALVATAGGIO)
+# file: server/pages/11_Anagrafica.py (Versione 16.0 - Architettura Service)
 
 from __future__ import annotations
 import os
@@ -10,9 +10,11 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 try:
-    from core.crm_db import crm_db_manager
-except ImportError:
-    st.error("Errore critico: Impossibile importare `core.crm_db`.")
+    # ★ IMPORT CORRETTO ★
+    # Importiamo solo il service layer, che gestisce tutto
+    from core.shift_service import shift_service
+except ImportError as e:
+    st.error(f"Errore critico: Impossibile importare `core.shift_service`: {e}")
     st.stop()
 
 st.set_page_config(page_title="Anagrafica Dipendenti", page_icon="👨‍💼", layout="wide")
@@ -36,9 +38,10 @@ with st.expander("➕ Aggiungi Nuovo Dipendente", expanded=False):
                 st.warning("Nome e Cognome sono obbligatori.")
             else:
                 try:
-                    new_id = crm_db_manager.add_dipendente(nome, cognome, ruolo)
+                    # ★ CHIAMATA CORRETTA al service ★
+                    new_id = shift_service.add_dipendente(nome, cognome, ruolo)
                     st.success(f"Dipendente {nome} {cognome} (ID: {new_id}) aggiunto con successo!")
-                    st.cache_data.clear()  # Pulisce la cache per aggiornare la tabella
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Errore durante l'inserimento: {e}")
@@ -49,9 +52,10 @@ st.divider()
 st.subheader("Elenco Personale")
 st.markdown("Modifica i dati direttamente nella tabella. Spunta la casella 'attivo' per rimuovere un dipendente dalle selezioni future senza cancellarlo.")
 
-@st.cache_data(ttl=60)  # Cache per 60 secondi
+@st.cache_data(ttl=60)
 def get_personale_df():
-    return crm_db_manager.get_dipendenti_df(solo_attivi=False)
+    # ★ CHIAMATA CORRETTA al service ★
+    return shift_service.get_dipendenti_df(solo_attivi=False)
 
 try:
     df_personale = get_personale_df()
@@ -59,13 +63,12 @@ try:
     if df_personale.empty:
         st.info("Nessun dipendente trovato. Inizia aggiungendone uno dal modulo qui sopra.")
     else:
-        # Usiamo st.data_editor per modifiche live
         edited_df = st.data_editor(
             df_personale,
             key="editor_personale",
             use_container_width=True,
-            num_rows="fixed",  # Non permettere aggiunte/eliminazioni da qui
-            disabled=["id_dipendente"],  # Non far modificare l'ID
+            num_rows="fixed",
+            disabled=["id_dipendente"],
             column_config={
                 "id_dipendente": st.column_config.NumberColumn("ID", disabled=True),
                 "nome": st.column_config.TextColumn("Nome", required=True),
@@ -75,12 +78,9 @@ try:
             }
         )
         
-        # Salva le modifiche quando l'utente clicca il pulsante
         if st.button("Salva Modifiche Tabella", type="primary"):
             try:
                 updates = []
-                
-                # Confronta dataframe modificato con originale
                 for id_dip in edited_df.index:
                     for col in ['nome', 'cognome', 'ruolo', 'attivo']:
                         if edited_df.loc[id_dip, col] != df_personale.loc[id_dip, col]:
@@ -89,13 +89,13 @@ try:
                 if not updates:
                     st.info("Nessuna modifica rilevata")
                 else:
-                    # ✅ USA IL NUOVO METODO
+                    # ★ CHIAMATA CORRETTA al service ★
                     for id_dip, field, new_val in updates:
-                        crm_db_manager.update_dipendente_field(id_dip, field, new_val)
+                        shift_service.update_dipendente_field(id_dip, field, new_val)
                     
                     st.success(f"✅ {len(updates)} modifiche salvate!")
-                    st.cache_data.clear()  # Pulisce la cache
-                    st.rerun()  # Ricarica la pagina per mostrare i dati puliti
+                    st.cache_data.clear()
+                    st.rerun()
                     
             except Exception as e:
                 st.error(f"Errore durante il salvataggio: {e}")

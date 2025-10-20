@@ -1,4 +1,4 @@
-# file: server/pages/01_📊_Reportistica.py (Versione CRM 3.0 - Midnight-Split-Aware)
+# file: server/pages/01_Reportistica.py (Versione 16.0 - Architettura Service)
 
 from __future__ import annotations
 import os
@@ -11,15 +11,13 @@ from datetime import date, timedelta
 # Aggiungiamo la root del progetto al path per importare i moduli 'core'
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-# Importiamo i NUOVI gestori DB
 try:
-    from core.crm_db import crm_db_manager
+    # ★ IMPORT CORRETTO ★
+    from core.shift_service import shift_service
     from core.schedule_db import schedule_db_manager
-    # --- IMPORTA LA FONTE DI VERITÀ ---
     from core.logic import calculate_duration_hours
-    # ---------------------------------
-except ImportError:
-    st.error("Errore critico: Impossibile importare i moduli del database (crm_db, schedule_db, logic).")
+except ImportError as e:
+    st.error(f"Errore critico: Impossibile importare i moduli: {e}")
     st.stop()
 
 st.set_page_config(page_title="Consuntivo Ore Lavorate", page_icon="📊", layout="wide")
@@ -42,13 +40,11 @@ def load_activities_map():
 
 activities_map = load_activities_map()
 
-# Funzione per mappare ID a Descrizione, gestendo casi mancanti
 def map_activity_id(id_att):
     if pd.isna(id_att) or id_att == "-1":
         return "N/A (Officina/Altro)"
     return activities_map.get(id_att, f"Attività Sconosciuta ({id_att})")
 
-# Filtri data
 st.subheader("Pannello di Controllo")
 with st.container(border=True):
     col1, col2, col3 = st.columns([1, 1, 2])
@@ -60,8 +56,8 @@ with st.container(border=True):
     with col2:
         date_to = st.date_input("A data", today)
     with col3:
-        st.write("") # Spacer
-        st.write("") # Spacer
+        st.write("")
+        st.write("")
         run_report = st.button("Applica Filtri e Aggiorna Report", type="primary", use_container_width=True)
 
 if not run_report:
@@ -75,38 +71,28 @@ if date_from > date_to:
 # --- 2. ESECUZIONE QUERY E CALCOLO DATI ---
 try:
     with st.spinner("Caricamento e aggregazione dati in corso..."):
-        # Esegui la query (ora semplificata, basata su "Midnight Split")
-        df_raw_report = crm_db_manager.get_report_data_df(date_from, date_to)
+        # ★ CHIAMATA CORRETTA al service ★
+        df_raw_report = shift_service.get_report_data_df(date_from, date_to)
 
         if df_raw_report.empty:
             st.warning("Nessuna registrazione trovata nell'intervallo di date selezionato.")
             st.stop()
         
-        # --- CALCOLO DURATA ---
-        # Calcoliamo la durata qui, usando la nostra FONTE DI VERITÀ
-        # Questo ora calcola la durata dei segmenti splittati (es. 4h e 6h)
+        # Calcoliamo la durata usando la fonte di verità
         df_raw_report['durata_ore'] = df_raw_report.apply(
             lambda row: calculate_duration_hours(row['data_ora_inizio'], row['data_ora_fine']),
             axis=1
         )
-        # -----------------------
 
-        # Arricchisci i dati
         df_raw_report['desc_attivita'] = df_raw_report['id_attivita'].apply(map_activity_id)
         
-        # --- Aggregazioni ---
-        # 1. Per Dipendente (Per Busta Paga)
+        # Aggregazioni
         df_dipendente = df_raw_report.groupby(['dipendente_nome', 'ruolo'])['durata_ore'].sum().reset_index()
         df_dipendente = df_dipendente.sort_values(by="durata_ore", ascending=False).rename(columns={'durata_ore': 'Ore Totali'})
         
-        # 2. Per Attività
         df_attivita = df_raw_report.groupby('desc_attivita')['durata_ore'].sum().reset_index()
         df_attivita = df_attivita.sort_values(by="durata_ore", ascending=False).rename(columns={'durata_ore': 'Ore Totali'})
         
-        # 3. Per Andamento Giornaliero
-        # --- MODIFICA CHIAVE ---
-        # Ora raggruppiamo per 'data_ora_inizio'.date() che è garantito
-        # essere il giorno corretto di competenza contabile.
         df_raw_report['giorno'] = df_raw_report['data_ora_inizio'].dt.date
         df_giornaliero = df_raw_report.groupby('giorno')['durata_ore'].sum().reset_index()
         
@@ -120,7 +106,6 @@ except Exception as e:
 # --- 3. VISUALIZZAZIONE E KPI ---
 st.header(f"Report dal {date_from.strftime('%d/%m/%Y')} al {date_to.strftime('%d/%m/%Y')}")
 
-# KPI Principali
 kpi1, kpi2, kpi3 = st.columns(3)
 kpi1.metric("Ore Totali Rendicontate", f"{total_hours:,.2f} h")
 kpi2.metric("Dipendenti Attivi", total_dipendenti)
@@ -128,7 +113,6 @@ kpi3.metric("Giorni di Lavoro nel Periodo", df_raw_report['giorno'].nunique())
 
 st.divider()
 
-# --- Grafici e Tabelle ---
 col_chart, col_table = st.columns([1, 1])
 
 with col_chart:
