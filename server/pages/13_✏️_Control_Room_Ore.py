@@ -1,4 +1,4 @@
-# file: server/pages/13_✏️_Control_Room_Ore.py (Versione 15.0 - Midnight-Split-Aware)
+# file: server/pages/13_✏️_Control_Room_Ore.py (Versione 15.1 - FIX Cache)
 
 from __future__ import annotations
 import os
@@ -34,7 +34,8 @@ def load_registrazioni(giorno: date):
     print(f"🔍 DEBUG: Trovate {len(df)} registrazioni (segmenti)")
     
     if not df.empty:
-        print(f"🔍 DEBUG: Prima registrazione: {df.iloc[0]['cognome']} {df.iloc[0]['nome']} - {df.iloc[0]['data_ora_inizio']} / {df.iloc[0]['data_ora_fine']}")
+        # Questo debug è utile per te:
+        print(f"🔍 DEBUG: Prima registrazione: {df.iloc[0]['cognome']} {df.iloc[0]['nome']} - {df.iloc[0]['data_ora_inizio']} / {df.iloc[0]['data_ora_fine']} / Ore: {df.iloc[0]['durata_ore']}")
     
     df_schedule = st.session_state.get('df_schedule', pd.DataFrame())
     if df_schedule.empty:
@@ -159,6 +160,11 @@ else:
                         st.warning(err)
             
             if aggiornati_count > 0 or eliminati_count > 0:
+                # --- ★★★ MICROMIGLIORAMENTO ★★★ ---
+                # Pulisce la cache di tutta l'app per forzare
+                # il ricalcolo della 'durata_ore' al rerun.
+                st.cache_data.clear()
+                # ------------------------------------
                 st.rerun()
                 
         except Exception as e:
@@ -227,4 +233,9 @@ else:
                 st.success(f"Interruzione applicata! {success_count} successi, {fail_count} fallimenti.")
                 
                 if success_count > 0:
+                    # --- ★★★ MICROMIGLIORAMENTO ★★★ ---
+                    # Pulisce la cache anche qui per
+                    # mostrare i nuovi segmenti splittati.
+                    st.cache_data.clear()
+                    # ------------------------------------
                     st.rerun()
