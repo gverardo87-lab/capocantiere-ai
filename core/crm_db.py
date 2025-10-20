@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 14.0 - Enterprise Architecture)
+# file: core/crm_db.py (Versione 14.0 - Enterprise Architecture - COMPLETO)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -125,7 +125,7 @@ class CrmDBManager:
         finally:
             conn.close()
 
-    # --- ANAGRAFICA, SQUADRE, TURNI STANDARD (Invariati) ---
+    # --- ANAGRAFICA, SQUADRE, TURNI STANDARD (Completo) ---
     def add_dipendente(self, nome: str, cognome: str, ruolo: str) -> int:
         with self._connect() as conn:
             cursor = conn.execute("INSERT INTO anagrafica_dipendenti (nome, cognome, ruolo) VALUES (?, ?, ?)", (nome, cognome, ruolo))
@@ -139,7 +139,48 @@ class CrmDBManager:
         with self._connect() as conn:
             return pd.read_sql_query(query, conn, index_col="id_dipendente")
 
-    # ... altri metodi invariati ...
+    def update_dipendente_field(self, id_dipendente: int, field_name: str, new_value):
+        allowed_fields = ['nome', 'cognome', 'ruolo', 'attivo']
+        if field_name not in allowed_fields:
+            raise ValueError(f"Campo '{field_name}' non modificabile")
+        with self._connect() as conn:
+            query = f"UPDATE anagrafica_dipendenti SET {field_name} = ? WHERE id_dipendente = ?"
+            conn.execute(query, (new_value, id_dipendente))
+            conn.commit()
+
+    def add_squadra(self, nome_squadra: str, id_caposquadra: Optional[int]) -> int:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("BEGIN TRANSACTION")
+                cursor.execute("INSERT INTO squadre (nome_squadra, id_caposquadra) VALUES (?, ?)", (nome_squadra, id_caposquadra))
+                new_squadra_id = cursor.lastrowid
+                if id_caposquadra is not None:
+                    cursor.execute("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", (new_squadra_id, id_caposquadra))
+                conn.commit()
+                return new_squadra_id
+            except Exception as e:
+                conn.rollback()
+                raise e
+
+    def update_membri_squadra(self, id_squadra: int, membri_ids: List[int]):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("BEGIN TRANSACTION")
+                cursor.execute("DELETE FROM membri_squadra WHERE id_squadra = ?", (id_squadra,))
+                if membri_ids:
+                    data_to_insert = [(id_squadra, id_dip) for id_dip in list(set(membri_ids))]
+                    cursor.executemany("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", data_to_insert)
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise e
+
+    def get_turni_standard(self) -> List[Dict[str, Any]]:
+         with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM turni_standard ORDER BY nome_turno").fetchall()
+            return [dict(row) for row in rows]
 
     # --- ★ METODI DI ACCESSO AI DATI (DAO) PER TURNI ★ ---
     # Questi metodi sono a basso livello e usati solo dal ShiftService
@@ -224,5 +265,134 @@ class CrmDBManager:
             df['durata_ore'] = df.apply(lambda row: calculate_duration_hours(row['data_ora_inizio'], row['data_ora_fine']), axis=1)
         return df.set_index('id_registrazione')
 
-# ... (setup_initial_data e istanza globale) ...
+    def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
+        """Estrae i dati grezzi per il report consuntivo."""
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
+        query = """
+        SELECT
+            r.id_registrazione,
+            r.data_ora_inizio,
+            r.data_ora_fine,
+            r.id_attivita,
+            r.tipo_ore,
+            a.id_dipendente,
+            a.cognome || ' ' || a.nome AS dipendente_nome,
+            a.ruolo,
+            r.id_turno_master
+        FROM registrazioni_ore r
+        JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente
+        WHERE date(r.data_ora_inizio) BETWEEN ? AND ?
+          AND a.attivo = 1
+          AND r.data_ora_inizio IS NOT NULL
+          AND r.data_ora_fine IS NOT NULL
+        """
+        with self._connect() as conn:
+            df = pd.read_sql_query(
+                query,
+                conn,
+                params=(start_str, end_str),
+                parse_dates=['data_ora_inizio', 'data_ora_fine']
+            )
+            return df
+
+    def get_squadre(self) -> List[Dict[str, Any]]:
+        """Ottiene un elenco di tutte le squadre."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM squadre ORDER BY nome_squadra").fetchall()
+            return [dict(row) for row in rows]
+
+    def insert_turno_standard(self, id_turno: str, nome: str, inizio: str, fine: str, scavalca: bool):
+         """Inserisce o aggiorna un turno standard."""
+         with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO turni_standard (id_turno, nome_turno, ora_inizio, ora_fine, scavalca_mezzanotte) VALUES (?, ?, ?, ?, ?)",
+                (id_turno, nome, inizio, fine, scavalca)
+            )
+            conn.commit()
+
+    def update_squadra_details(self, id_squadra: int, nome_squadra: str, id_caposquadra: Optional[int]):
+        """Aggiorna nome e caposquadra di una squadra."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE squadre SET nome_squadra = ?, id_caposquadra = ? WHERE id_squadra = ?",
+                (nome_squadra, id_caposquadra, id_squadra)
+            )
+            conn.commit()
+
+    def delete_squadra(self, id_squadra: int):
+        """Elimina una squadra (e i membri grazie a ON DELETE CASCADE)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM squadre WHERE id_squadra = ?", (id_squadra,))
+            conn.commit()
+
+    def get_membri_squadra(self, id_squadra: int) -> List[int]:
+        """Ottiene gli ID dei membri di una singola squadra."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id_dipendente FROM membri_squadra WHERE id_squadra = ?",
+                (id_squadra,)
+            ).fetchall()
+            return [row['id_dipendente'] for row in rows]
+
+    def split_registrazione_interruzione(self, id_registrazione: int, start_interruzione: datetime.datetime, end_interruzione: datetime.datetime):
+        """Divide un turno esistente per inserire un'interruzione."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT * FROM registrazioni_ore WHERE id_registrazione = ?",
+                    (id_registrazione,)
+                )
+                record = cursor.fetchone()
+                if not record: raise Exception("Record non trovato")
+
+                original_start_time = datetime.datetime.fromisoformat(record['data_ora_inizio'])
+                original_end_time = datetime.datetime.fromisoformat(record['data_ora_fine'])
+
+                if start_interruzione >= end_interruzione or \
+                   start_interruzione < original_start_time or \
+                   end_interruzione > original_end_time:
+                    raise Exception("Interruzione non valida (fuori dai limiti del turno o orari invertiti)")
+
+                cursor.execute("BEGIN TRANSACTION")
+
+                # Accorcia il turno originale
+                cursor.execute(
+                    "UPDATE registrazioni_ore SET data_ora_fine = ? WHERE id_registrazione = ?",
+                    (start_interruzione.isoformat(), id_registrazione)
+                )
+
+                # Crea il nuovo segmento post-interruzione, se necessario
+                if end_interruzione < original_end_time:
+                    cursor.execute("""
+                        INSERT INTO registrazioni_ore
+                        (id_dipendente, id_attivita, data_ora_inizio, data_ora_fine, tipo_ore, note)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        record['id_dipendente'], record['id_attivita'],
+                        end_interruzione.isoformat(), original_end_time.isoformat(),
+                        record['tipo_ore'], f"{record['note'] or ''} (post-interruzione)".strip()
+                    ))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise e
+
+def setup_initial_data():
+    """Popola i turni standard se il database è vuoto."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM turni_standard")
+
+    if cursor.fetchone()[0] == 0:
+        print("Popolamento turni standard iniziali...")
+        db_manager = CrmDBManager()
+        db_manager.insert_turno_standard("GIORNO_08_18", "Turno di Giorno (8-18)", "08:00:00", "18:00:00", False)
+        db_manager.insert_turno_standard("NOTTE_20_06", "Turno di Notte (20-06)", "20:00:00", "06:00:00", True)
+
+    conn.close()
+
+# Istanza globale
 crm_db_manager = CrmDBManager()
+setup_initial_data()
