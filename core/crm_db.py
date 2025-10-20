@@ -408,7 +408,7 @@ class CrmDBManager:
     def update_segmento_orari(self, id_reg: int, start_time: datetime.datetime,
                               end_time: datetime.datetime, id_att: str, note: str):
         """
-        Versione 12.7 - Aggiorna un singolo segmento con logica avanzata per turni splittati.
+        Versione 12.8 - Normalizzazione timestamp per ricerca gemello.
         """
         if not id_reg or not start_time or not end_time:
             raise ValueError("ID, data inizio e data fine sono obbligatori")
@@ -433,17 +433,22 @@ class CrmDBManager:
             # 2. Logica per identificare il "gemello" di un turno splittato
             sibling_reg_id = None
 
+            # Normalizza i timestamp per la ricerca, ignorando i microsecondi che
+            # possono creare problemi nella comparazione delle stringhe ISO.
+            normalized_start = current_start.replace(microsecond=0)
+            normalized_end = current_end.replace(microsecond=0)
+
             # Caso 1: il segmento finisce a mezzanotte, cerca il gemello che inizia alla stessa ora
-            if current_end.hour == 0 and current_end.minute == 0 and current_end.second == 0:
+            if normalized_end.hour == 0 and normalized_end.minute == 0 and normalized_end.second == 0:
                 query_sibling = "SELECT id_registrazione FROM registrazioni_ore WHERE id_dipendente = ? AND data_ora_inizio = ? AND id_registrazione != ?"
-                params_sibling = (id_dipendente, current_end.isoformat(), id_reg)
+                params_sibling = (id_dipendente, normalized_end.isoformat(), id_reg)
                 sibling_row = cursor.execute(query_sibling, params_sibling).fetchone()
                 if sibling_row: sibling_reg_id = sibling_row['id_registrazione']
 
             # Caso 2: il segmento inizia a mezzanotte, cerca il gemello che finisce alla stessa ora
-            elif current_start.hour == 0 and current_start.minute == 0 and current_start.second == 0:
+            elif normalized_start.hour == 0 and normalized_start.minute == 0 and normalized_start.second == 0:
                 query_sibling = "SELECT id_registrazione FROM registrazioni_ore WHERE id_dipendente = ? AND data_ora_fine = ? AND id_registrazione != ?"
-                params_sibling = (id_dipendente, current_start.isoformat(), id_reg)
+                params_sibling = (id_dipendente, normalized_start.isoformat(), id_reg)
                 sibling_row = cursor.execute(query_sibling, params_sibling).fetchone()
                 if sibling_row: sibling_reg_id = sibling_row['id_registrazione']
 
