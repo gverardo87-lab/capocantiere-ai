@@ -1,68 +1,56 @@
-# core/shift_service.py (Versione 14.0 - Enterprise Logic)
+# core/shift_service.py (Versione 16.0 - Architettura Service Layer Centrale)
 from __future__ import annotations
 import datetime
 from typing import List, Dict, Any, Optional
+import pandas as pd
 
-from core.crm_db import CrmDBManager
+# Importa la classe DAO e le costanti
+from core.crm_db import CrmDBManager, DB_FILE, setup_initial_data
 
 class ShiftService:
     """
     Service Layer per la gestione centralizzata della logica di business dei turni.
-    Questa classe è l'unica fonte di verità per le operazioni complesse sui turni,
-    garantendo una netta separazione tra logica di business e accesso ai dati.
+    Questa classe è l'UNICA che l'interfaccia utente (Streamlit) deve chiamare.
+    Contiene sia la logica di business (scrittura) che i metodi pass-through (lettura).
     """
     def __init__(self, db_manager: CrmDBManager):
-        self.db_manager = db_manager
+        self.db_manager = db_manager # Questo è il nostro DAO
+
+    # --- 1. LOGICA DI BUSINESS (SCRITTURA) ---
 
     def _split_and_prepare_segments(self, id_turno_master: int, shift_data: Dict[str, Any]) -> List[tuple]:
-        """
-        Divide un turno master nei suoi segmenti contabili (es. a mezzanotte).
-        Questa logica ora vive nel service layer, vicino al business process.
-        """
+        """Logica interna per splittare i turni a mezzanotte."""
         start = shift_data['data_ora_inizio']
         end = shift_data['data_ora_fine']
         note = shift_data.get('note') or ''
 
-        # Caso 1: il turno non scavalca la mezzanotte
         if start.date() == end.date():
             return [(
-                id_turno_master,
-                shift_data['id_dipendente'], shift_data.get('id_attivita'),
+                id_turno_master, shift_data['id_dipendente'], shift_data.get('id_attivita'),
                 start, end, note
             )]
 
-        # Caso 2: il turno scavalca la mezzanotte
         mezzanotte = (start + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # Caso speciale in cui il turno finisce esattamente a mezzanotte del giorno dopo
         if end == mezzanotte:
              return [(
-                id_turno_master,
-                shift_data['id_dipendente'], shift_data.get('id_attivita'),
+                id_turno_master, shift_data['id_dipendente'], shift_data.get('id_attivita'),
                 start, end, note
             )]
 
-        # Creazione dei due segmenti
         segment1 = (
-            id_turno_master,
-            shift_data['id_dipendente'], shift_data.get('id_attivita'),
+            id_turno_master, shift_data['id_dipendente'], shift_data.get('id_attivita'),
             start, mezzanotte, f"{note} (Parte 1)".strip()
         )
         segment2 = (
-            id_turno_master,
-            shift_data['id_dipendente'], shift_data.get('id_attivita'),
+            id_turno_master, shift_data['id_dipendente'], shift_data.get('id_attivita'),
             mezzanotte, end, f"{note} (Parte 2)".strip()
         )
         return [segment1, segment2]
 
     def create_shifts_batch(self, shifts_data: List[Dict[str, Any]]) -> int:
-        """
-        Crea uno o più turni in modo transazionale e sicuro.
-        Sostituisce la vecchia `crea_registrazioni_batch`.
-        """
+        """Crea uno o più turni master e i relativi segmenti."""
         if not shifts_data:
             return 0
-
         total_segments_created = 0
         with self.db_manager.transaction() as cursor:
             for shift in shifts_data:
@@ -70,86 +58,140 @@ class ShiftService:
                 start_time = shift['data_ora_inizio']
                 end_time = shift['data_ora_fine']
 
-                # 1. Validazione: controlla sovrapposizioni sul master
                 if self.db_manager.check_for_master_overlaps(id_dipendente, start_time, end_time):
-                    # Idealmente, qui si dovrebbe fornire un feedback più granulare
                     raise ValueError(f"Sovrapposizione rilevata per il dipendente {id_dipendente} nell'intervallo {start_time} - {end_time}")
 
-                # 2. Crea il record master
                 master_id = self.db_manager.create_turno_master(cursor, shift)
-
-                # 3. Crea i segmenti contabili
                 segments = self._split_and_prepare_segments(master_id, shift)
                 self.db_manager.create_registrazioni_segments(cursor, segments)
                 total_segments_created += len(segments)
-
         return total_segments_created
 
-    def update_shift_from_segment(
-        self, id_registrazione: int, new_segment_start: datetime.datetime,
-        new_segment_end: datetime.datetime, new_id_attivita: Optional[str], new_note: Optional[str]):
-        """
-        Aggiorna un intero turno (anche splittato) partendo dalla modifica di un suo segmento.
-        Questa è la soluzione definitiva e robusta al problema originale.
-        """
+    def update_master_shift(
+        self, id_turno_master: int, new_start: datetime.datetime,
+        new_end: datetime.datetime, new_id_attivita: Optional[str], new_note: Optional[str]):
+        """Aggiorna un intero turno master e ricrea i suoi segmenti."""
         with self.db_manager.transaction() as cursor:
-            # 1. Trova il master dal segmento che si sta modificando
-            segmento_originale = self.db_manager.get_registrazione(cursor, id_registrazione)
-            if not segmento_originale or not segmento_originale['id_turno_master']:
-                raise ValueError(f"Impossibile aggiornare: il segmento {id_registrazione} non è valido o è un record obsoleto.")
-
-            id_master = segmento_originale['id_turno_master']
-            master_originale = self.db_manager.get_turno_master(cursor, id_master)
+            master_originale = self.db_manager.get_turno_master(cursor, id_turno_master)
             if not master_originale:
-                 raise ValueError(f"Inconsistenza del database: master non trovato per il segmento {id_registrazione}.")
+                 raise ValueError(f"Turno master {id_turno_master} non trovato.")
 
-            # 2. Ricostruisci l'intervallo del nuovo turno completo
-            master_start_originale = datetime.datetime.fromisoformat(master_originale['data_ora_inizio_effettiva'])
-
-            # Se il segmento originale finiva a mezzanotte, era la "Parte 1"
-            segmento_originale_end = datetime.datetime.fromisoformat(segmento_originale['data_ora_fine'])
-            era_parte_1 = (segmento_originale_end.time() == datetime.time(0, 0))
-
-            if era_parte_1:
-                full_new_start = new_segment_start
-                full_new_end = datetime.datetime.fromisoformat(master_originale['data_ora_fine_effettiva'])
-            else: # Era la "Parte 2" o un turno non splittato
-                full_new_start = master_start_originale
-                full_new_end = new_segment_end
-
-            # 3. Validazione: controlla sovrapposizioni per il nuovo turno completo, escludendo se stesso
             if self.db_manager.check_for_master_overlaps(
-                master_originale['id_dipendente'], full_new_start, full_new_end, exclude_master_id=id_master):
+                master_originale['id_dipendente'], new_start, new_end, exclude_master_id=id_turno_master):
                 raise ValueError("La modifica causa una sovrapposizione con un altro turno.")
 
-            # 4. Aggiorna il master (i segmenti verranno cancellati in cascata grazie a ON DELETE CASCADE)
             self.db_manager.update_turno_master(
-                cursor, id_master, full_new_start, full_new_end, new_id_attivita, new_note)
+                cursor, id_turno_master, new_start, new_end, new_id_attivita, new_note)
 
-            # 5. Ricrea i segmenti a partire dal master aggiornato
             new_master_data = {
                 'id_dipendente': master_originale['id_dipendente'],
-                'data_ora_inizio': full_new_start,
-                'data_ora_fine': full_new_end,
+                'data_ora_inizio': new_start,
+                'data_ora_fine': new_end,
                 'id_attivita': new_id_attivita,
                 'note': new_note
             }
-            new_segments = self._split_and_prepare_segments(id_master, new_master_data)
+            new_segments = self._split_and_prepare_segments(id_turno_master, new_master_data)
             self.db_manager.create_registrazioni_segments(cursor, new_segments)
 
-    def delete_shift_from_segment(self, id_registrazione: int):
-        """
-        Elimina un intero turno (master e segmenti) partendo dall'ID di un suo segmento.
-        """
+    def delete_master_shift(self, id_turno_master: int):
+        """Elimina un intero turno master e tutti i suoi segmenti in cascata."""
         with self.db_manager.transaction() as cursor:
-            segmento = self.db_manager.get_registrazione(cursor, id_registrazione)
-            if not segmento or not segmento['id_turno_master']:
-                # Record vecchio o orfano, lo eliminiamo direttamente
-                self.db_manager.delete_registrazione(cursor, id_registrazione)
-                return
+            self.db_manager.delete_turno_master(cursor, id_turno_master)
 
-            # Elimina il master, i segmenti verranno rimossi in cascata
-            self.db_manager.delete_turno_master(cursor, segmento['id_turno_master'])
+    def split_master_shift_for_interruption(
+        self, id_turno_master: int, start_interruzione: datetime.datetime, end_interruzione: datetime.datetime
+    ):
+        """Gestisce un'interruzione creando due nuovi turni master."""
+        with self.db_manager.transaction() as cursor:
+            master_originale = self.db_manager.get_turno_master(cursor, id_turno_master)
+            if not master_originale:
+                raise ValueError(f"Turno master {id_turno_master} non trovato.")
 
-# Istanza globale del servizio per un facile accesso dall'UI
-shift_service = ShiftService(db_manager=CrmDBManager())
+            original_start = datetime.datetime.fromisoformat(master_originale['data_ora_inizio_effettiva'])
+            original_end = datetime.datetime.fromisoformat(master_originale['data_ora_fine_effettiva'])
+            
+            if start_interruzione >= end_interruzione or \
+               start_interruzione < original_start or \
+               end_interruzione > original_end:
+                raise ValueError("Interruzione non valida (fuori dai limiti del turno o orari invertiti)")
+
+            # Elimina il turno master originale
+            self.db_manager.delete_turno_master(cursor, id_turno_master)
+            
+            # Prepara i nuovi turni da creare
+            shifts_to_create = []
+            if original_start < start_interruzione:
+                shifts_to_create.append({
+                    "id_dipendente": master_originale['id_dipendente'], "id_attivita": master_originale.get('id_attivita'),
+                    "data_ora_inizio": original_start, "data_ora_fine": start_interruzione,
+                    "note": f"{master_originale.get('note') or ''} (Split 1)".strip()
+                })
+            if end_interruzione < original_end:
+                shifts_to_create.append({
+                    "id_dipendente": master_originale['id_dipendente'], "id_attivita": master_originale.get('id_attivita'),
+                    "data_ora_inizio": end_interruzione, "data_ora_fine": original_end,
+                    "note": f"{master_originale.get('note') or ''} (Split 2)".strip()
+                })
+        
+        # Esegui la creazione in un batch separato (che apre la sua transazione)
+        if shifts_to_create:
+            self.create_shifts_batch(shifts_to_create)
+
+    # --- 2. METODI PASS-THROUGH (LETTURA) PER LA UI ---
+    # Questi metodi permettono alla UI di non importare mai il CrmDBManager
+
+    def get_turni_standard(self) -> List[Dict[str, Any]]:
+        return self.db_manager.get_turni_standard()
+
+    def get_squadre(self) -> List[Dict[str, Any]]:
+        return self.db_manager.get_squadre()
+
+    def get_dipendenti_df(self, solo_attivi: bool = False) -> pd.DataFrame:
+        return self.db_manager.get_dipendenti_df(solo_attivi)
+
+    def get_membri_squadra(self, id_squadra: int) -> List[int]:
+        return self.db_manager.get_membri_squadra(id_squadra)
+
+    def check_for_master_overlaps(self, id_dipendente: int, start_time: datetime.datetime, end_time: datetime.datetime, exclude_master_id: Optional[int] = None) -> bool:
+        return self.db_manager.check_for_master_overlaps(id_dipendente, start_time, end_time, exclude_master_id)
+
+    def get_turni_master_giorno_df(self, giorno: datetime.date) -> pd.DataFrame:
+        return self.db_manager.get_turni_master_giorno_df(giorno)
+        
+    def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
+        return self.db_manager.get_report_data_df(start_date, end_date)
+        
+    def add_dipendente(self, nome: str, cognome: str, ruolo: str) -> int:
+        return self.db_manager.add_dipendente(nome, cognome, ruolo)
+        
+    def update_dipendente_field(self, id_dipendente: int, field_name: str, new_value):
+        return self.db_manager.update_dipendente_field(id_dipendente, field_name, new_value)
+        
+    def add_squadra(self, nome_squadra: str, id_caposquadra: Optional[int]) -> int:
+        return self.db_manager.add_squadra(nome_squadra, id_caposquadra)
+        
+    def update_membri_squadra(self, id_squadra: int, membri_ids: List[int]):
+        return self.db_manager.update_membri_squadra(id_squadra, membri_ids)
+        
+    def update_squadra_details(self, id_squadra: int, nome_squadra: str, id_caposquadra: Optional[int]):
+        return self.db_manager.update_squadra_details(id_squadra, nome_squadra, id_caposquadra)
+        
+    def delete_squadra(self, id_squadra: int):
+        return self.db_manager.delete_squadra(id_squadra)
+
+
+# --- 3. CREAZIONE ISTANZE GLOBALI ---
+# Questo codice viene eseguito una sola volta quando l'app si avvia.
+
+# 1. Assicura che i dati iniziali (turni) esistano
+setup_initial_data()
+
+# 2. Crea l'istanza del DAO (Data Access)
+# La UI non vedrà mai questa variabile
+_db_dao = CrmDBManager(DB_FILE)
+
+# 3. Crea l'istanza del Service Layer, iniettando il DAO
+# QUESTA è l'unica variabile che le pagine Streamlit importeranno
+shift_service = ShiftService(db_manager=_db_dao)
+
+print("✅ ShiftService e CrmDBManager inizializzati correttamente (Architettura 16.0)")

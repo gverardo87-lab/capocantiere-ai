@@ -1,4 +1,4 @@
-# file: server/pages/10_📅_Pianificazione_Turni.py (Versione 12.0 - Pulizia Cache)
+# file: server/pages/10_📅_Pianificazione_Turni.py (Versione 16.0 - Architettura Service)
 
 from __future__ import annotations
 import os
@@ -11,10 +11,12 @@ from datetime import datetime, date, time, timedelta
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 try:
-    from core.crm_db import crm_db_manager
+    # ★ IMPORT CORRETTO ★
+    # Importiamo solo il service layer, che gestisce tutto
+    from core.shift_service import shift_service
     from core.schedule_db import schedule_db_manager
-except ImportError:
-    st.error("Errore critico: Impossibile importare i moduli del database.")
+except ImportError as e:
+    st.error(f"Errore critico: Impossibile importare i moduli: {e}")
     st.stop()
 
 st.set_page_config(page_title="Pianificazione Turni", page_icon="📅", layout="wide")
@@ -24,13 +26,15 @@ st.markdown("Assegna rapidamente intere squadre ai turni di lavoro per attività
 # --- CARICAMENTO DATI ---
 @st.cache_data(ttl=60)
 def load_data():
-    """Carica i dati necessari dai database."""
-    turni = crm_db_manager.get_turni_standard()
-    squadre = crm_db_manager.get_squadre()
+    """Carica i dati necessari dai database tramite il service layer."""
+    # ★ CHIAMATE CORRETTE al service ★
+    turni = shift_service.get_turni_standard()
+    squadre = shift_service.get_squadre()
+    df_dipendenti = shift_service.get_dipendenti_df(solo_attivi=True)
     
-    df_dipendenti = crm_db_manager.get_dipendenti_df(solo_attivi=True)
     dipendenti_map = {index: f"{row['cognome']} {row['nome']}" for index, row in df_dipendenti.iterrows()}
 
+    # Il cronoprogramma è separato, quindi va bene
     df_schedule = st.session_state.get('df_schedule', pd.DataFrame())
     if df_schedule.empty:
         schedule_data = schedule_db_manager.get_schedule_data()
@@ -78,11 +82,7 @@ else:
                     })
                 except Exception as e:
                     st.warning(f"Impossibile filtrare le attività: {e}")
-            elif not df_schedule.empty:
-                st.warning("Cronoprogramma caricato ma colonna 'data_fine' mancante.")
-            else:
-                st.info("Nessun cronoprogramma caricato (puoi caricarlo nella pagina 'Cronoprogramma').")
-
+            
             attivita_selezionata_id = st.selectbox(
                 "Seleziona Attività del Cronoprogramma",
                 options=opzioni_attivita.keys(),
@@ -100,7 +100,7 @@ else:
         
         submitted = st.form_submit_button("🚀 Pianifica Turno", type="primary", use_container_width=True)
 
-    # --- LOGICA DI ELABORAZIONE (Con Pulizia Cache) ---
+    # --- LOGICA DI ELABORAZIONE ---
     if submitted:
         try:
             # 1. Recupera dettagli turno
@@ -109,8 +109,8 @@ else:
             ora_fine = datetime.strptime(turno_obj['ora_fine'], '%H:%M:%S').time()
             scavalca_mezzanotte = turno_obj['scavalca_mezzanotte']
 
-            # 2. Recupera membri squadra
-            membri_ids = crm_db_manager.get_membri_squadra(squadra_selezionata_id)
+            # 2. Recupera membri squadra (★ CHIAMATA CORRETTA ★)
+            membri_ids = shift_service.get_membri_squadra(squadra_selezionata_id)
             if not membri_ids:
                 st.error(f"La squadra '{opzioni_squadre[squadra_selezionata_id]}' non ha membri assegnati."); st.stop()
 
@@ -121,8 +121,11 @@ else:
                 giorno_fine += timedelta(days=1)
             data_ora_fine = datetime.combine(giorno_fine, ora_fine)
 
-            # 4. CONTROLLO SOVRAPPOSIZIONI
-            conflitti = crm_db_manager.check_for_overlaps(membri_ids, data_ora_inizio, data_ora_fine)
+            # 4. CONTROLLO SOVRAPPOSIZIONI (★ CHIAMATA CORRETTA ★)
+            conflitti = []
+            for id_dip in membri_ids:
+                if shift_service.check_for_master_overlaps(id_dip, data_ora_inizio, data_ora_fine):
+                    conflitti.append(dipendenti_map.get(id_dip, f"ID Sconosciuto ({id_dip})"))
             
             if conflitti:
                 st.error("⛔ Impossibile pianificare il turno. I seguenti operai hanno già una sovrapposizione:")
@@ -141,16 +144,12 @@ else:
                 })
                 nomi_membri_coinvolti.append(dipendenti_map.get(id_dipendente, f"ID Sconosciuto ({id_dipendente})"))
 
-            # 6. Inserisci nel DB
-            num_inseriti = crm_db_manager.crea_registrazioni_batch(registrazioni_batch)
+            # 6. Inserisci nel DB (★ CHIAMATA CORRETTA ★)
+            num_inseriti = shift_service.create_shifts_batch(registrazioni_batch)
             
-            # --- MODIFICA CHIAVE: Pulisci la cache di tutte le pagine ---
             st.cache_data.clear()
-            # --- FINE MODIFICA ---
-
             st.success(f"✅ Turno pianificato con successo! Inserite {num_inseriti} registrazioni ore.")
             
-            # Riepilogo
             with st.container(border=True):
                 st.subheader("Riepilogo Inserimento")
                 c1, c2 = st.columns(2)
@@ -165,4 +164,5 @@ else:
 
         except Exception as e:
             st.error(f"Si è verificato un errore durante la pianificazione: {e}")
-            print(e)
+            import traceback
+            st.code(traceback.format_exc())

@@ -1,4 +1,4 @@
-# server/app.py (Versione Pulita - Solo CRM)
+# server/app.py (Versione Pulita - Solo CRM - Nomi file corretti)
 
 from __future__ import annotations
 import os
@@ -31,10 +31,6 @@ def initialize_data():
     if 'data_loaded' not in st.session_state:
         print("--- Inizializzazione dati per l'applicazione ---")
         
-        # --- RIMOSSO CARICAMENTO VECCHIO DB ---
-        # presence_data = db_manager.get_all_presence_data()
-        # st.session_state.df_presence = pd.DataFrame(presence_data) if presence_data else pd.DataFrame()
-        
         # Manteniamo il caricamento del cronoprogramma
         schedule_data = schedule_db_manager.get_schedule_data()
         st.session_state.df_schedule = pd.DataFrame(schedule_data) if schedule_data else pd.DataFrame()
@@ -50,9 +46,6 @@ if st.session_state.pop('force_rerun', False):
     initialize_data() # Forza il ricaricamento dei dati
     st.rerun()
 
-# --- FUNZIONI DI GESTIONE FILE (RIMOSSE) ---
-# Le vecchie funzioni 'process_uploaded_file' e 'delete_all_data' 
-# sono state rimosse perché 'core/db.py' è obsoleto.
 
 # --- SIDEBAR (Grafica Pulita) ---
 with st.sidebar:
@@ -60,18 +53,15 @@ with st.sidebar:
     st.title("🏗️ CapoCantiere AI")
     st.markdown("---")
     
-    # --- RIMOSSO EXPANDER DI UPLOAD E BOTTONE CANCELLA ---
-    # L'uploader Excel e il bottone "Svuota Archivio"
-    # sono stati rimossi.
-    
     st.markdown("Benvenuto nel sistema di gestione CRM.")
-    st.page_link("pages/10_📅_Pianificazione_Turni.py", label="Pianifica Turni", icon="📅")
-    st.page_link("pages/13_✏️_Control_Room_Ore.py", label="Control Room Ore", icon="✏️")
+    # ★ LINK AGGIORNATI SENZA EMOJI ★
+    st.page_link("pages/10_Pianificazione_Turni.py", label="Pianifica Turni", icon="📅")
+    st.page_link("pages/13_Control_Room_Ore.py", label="Control Room Ore", icon="✏️")
     
     st.markdown("---")
     st.header("Configurazione")
-    st.page_link("pages/11_👨‍💼_Anagrafica.py", label="Gestisci Anagrafica", icon="👨‍💼")
-    st.page_link("pages/12_👥_Gestione_Squadre.py", label="Gestisci Squadre", icon="👥")
+    st.page_link("pages/11_Anagrafica.py", label="Gestisci Anagrafica", icon="👨‍💼")
+    st.page_link("pages/12_Gestione_Squadre.py", label="Gestisci Squadre", icon="👥")
 
 
 # --- PAGINA PRINCIPALE (Dashboard di Benvenuto) ---
@@ -86,17 +76,20 @@ with col_crm1:
     with st.container(border=True):
         st.subheader("📅 Pianificazione")
         st.markdown("Assegna **squadre** ai turni e alle attività in pochi click.")
-        st.page_link("pages/10_📅_Pianificazione_Turni.py", label="Vai alla Pianificazione", icon="📅")
+        # ★ LINK AGGIORNATI SENZA EMOJI ★
+        st.page_link("pages/10_Pianificazione_Turni.py", label="Vai alla Pianificazione", icon="📅")
 with col_crm2:
     with st.container(border=True):
         st.subheader("✏️ Control Room")
         st.markdown("Gestisci **eccezioni**, interruzioni e modifica i singoli orari.")
-        st.page_link("pages/13_✏️_Control_Room_Ore.py", label="Vai alla Control Room", icon="✏️")
+        # ★ LINK AGGIORNATI SENZA EMOJI ★
+        st.page_link("pages/13_Control_Room_Ore.py", label="Vai alla Control Room", icon="✏️")
 with col_crm3:
     with st.container(border=True):
         st.subheader("📊 Consuntivo")
         st.markdown("Analizza le **ore totali** per dipendente, attività e commessa.")
-        st.page_link("pages/01_📊_Reportistica.py", label="Vai al Consuntivo", icon="📊")
+        # ★ LINK AGGIORNATI SENZA EMOJI ★
+        st.page_link("pages/01_Reportistica.py", label="Vai al Consuntivo", icon="📊")
 
 st.divider()
 
@@ -106,21 +99,25 @@ with col1:
     with st.container(border=True):
         st.subheader("📈 Cronoprogramma")
         st.markdown("Visualizza il **diagramma di Gantt** delle attività e monitora l'avanzamento.")
-        st.page_link("pages/04_📈_Cronoprogramma.py", label="Visualizza Gantt", icon="📈")
+        # ★ LINK AGGIORNATI SENZA EMOJI ★
+        st.page_link("pages/04_Cronoprogramma.py", label="Visualizza Gantt", icon="📈")
 with col2:
     with st.container(border=True):
         st.subheader("⚙️ Analisi Workflow")
         st.markdown("Ottimizza l'**allocazione delle risorse** e identifica i colli di bottiglia.")
-        st.page_link("pages/05_⚙️_Workflow_Analysis.py", label="Analizza Workflow", icon="⚙️")
+        # ★ LINK AGGIORNATI SENZA EMOJI ★
+        st.page_link("pages/05_Workflow_Analysis.py", label="Analizza Workflow", icon="⚙️")
 
 col_chat, col_expert = st.columns(2)
 with col_chat:
     with st.container(border=True):
         st.subheader("👨‍🔧 Esperto Tecnico")
         st.markdown("Poni domande complesse sulla **documentazione tecnica**.")
-        st.page_link("pages/03_👨‍🔧_Esperto_Tecnico.py", label="Interroga l'Esperto", icon="👨‍🔧")
+        # ★ LINK AGGIORNATI SENZA EMOJI ★
+        st.page_link("pages/03_Esperto_Tecnico.py", label="Interroga l'Esperto", icon="👨‍🔧")
 with col_expert:
     with st.container(border=True):
         st.subheader("📚 Esplora Documenti")
         st.markdown("Naviga e visualizza l'**archivio documentale** tecnico.")
-        st.page_link("pages/06_📚_Document_Explorer.py", label="Esplora Archivio", icon="📚")
+        # ★ LINK AGGIORNATI SENZA EMOJI ★
+        st.page_link("pages/06_Document_Explorer.py", label="Esplora Archivio", icon="📚")
