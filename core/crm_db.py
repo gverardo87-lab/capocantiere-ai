@@ -206,9 +206,9 @@ class CrmDBManager:
 
     # --- REGISTRAZIONI ORE ---
 
-    def check_for_overlaps(self, list_of_dipendente_ids: List[int], proposed_start: datetime.datetime, proposed_end: datetime.datetime, exclude_id: Optional[int] = None) -> List[str]:
+    def check_for_overlaps(self, list_of_dipendente_ids: List[int], proposed_start: datetime.datetime, proposed_end: datetime.datetime, exclude_ids: Optional[List[int]] = None) -> List[str]:
         """
-        Versione 12.4 - Restituisce stringa di errore dettagliata.
+        Versione 12.7 - Esclusione multipla per gestire turni splittati.
         La logica SQL usa '<' e '>' (non '<=' e '>=') per permettere ai turni
         di "toccarsi" (es. uno finisce alle 00:00, l'altro inizia alle 00:00).
         """
@@ -237,9 +237,12 @@ class CrmDBManager:
         params.append(proposed_end.isoformat())
         params.append(proposed_start.isoformat())
 
-        if exclude_id is not None:
-            query += " AND r.id_registrazione != ?"
-            params.append(exclude_id)
+        if exclude_ids:
+            # Pulisce la lista per evitare SQL injection, anche se interna.
+            clean_exclude_ids = [int(id) for id in exclude_ids if id is not None]
+            if clean_exclude_ids:
+                query += f" AND r.id_registrazione NOT IN ({','.join(['?'] * len(clean_exclude_ids))})"
+                params.extend(clean_exclude_ids)
 
         with self._connect() as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
@@ -353,6 +356,16 @@ class CrmDBManager:
             )
             return df
 
+    def _get_registrazione(self, id_registrazione: int) -> Optional[sqlite3.Row]:
+        """Recupera una singola registrazione dal DB."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM registrazioni_ore WHERE id_registrazione = ?",
+                (id_registrazione,)
+            )
+            return cursor.fetchone()
+
     def get_registrazioni_giorno_df(self, giorno: datetime.date) -> pd.DataFrame:
         """
         Recupera i segmenti per un singolo giorno di competenza.
@@ -395,39 +408,67 @@ class CrmDBManager:
     def update_segmento_orari(self, id_reg: int, start_time: datetime.datetime,
                               end_time: datetime.datetime, id_att: str, note: str):
         """
-        Aggiorna un *singolo segmento* senza logica di split.
-        Ideale per la Control Room.
+        Versione 12.7 - Aggiorna un singolo segmento con logica avanzata per turni splittati.
         """
         if not id_reg or not start_time or not end_time:
             raise ValueError("ID, data inizio e data fine sono obbligatori")
         if start_time >= end_time:
             raise ValueError("L'orario di inizio deve essere precedente alla fine")
-        
+
         db_att = id_att if (id_att and id_att != "-1") else None
         db_note = note if note else None
-        
+
         with self._connect() as conn:
             cursor = conn.cursor()
             
-            # 1. Trova l'ID del dipendente
-            cursor.execute(
-                "SELECT id_dipendente FROM registrazioni_ore WHERE id_registrazione = ?",
-                (id_reg,)
-            )
-            row = cursor.fetchone()
-            if not row:
+            # 1. Recupera i dati del segmento attuale
+            current_reg = self._get_registrazione(id_reg)
+            if not current_reg:
                 raise ValueError(f"Registrazione {id_reg} non trovata")
-            id_dipendente = row['id_dipendente']
             
-            # 2. Controlla sovrapposizioni ESCLUDENDO se stesso
+            id_dipendente = current_reg['id_dipendente']
+            current_start = datetime.datetime.fromisoformat(current_reg['data_ora_inizio'])
+            current_end = datetime.datetime.fromisoformat(current_reg['data_ora_fine'])
+
+            # 2. Logica per identificare il "gemello" di un turno splittato
+            sibling_reg_id = None
+
+            # Caso 1: il segmento finisce a mezzanotte, cerca il gemello che inizia alla stessa ora
+            if current_end.hour == 0 and current_end.minute == 0 and current_end.second == 0:
+                query_sibling = "SELECT id_registrazione FROM registrazioni_ore WHERE id_dipendente = ? AND data_ora_inizio = ? AND id_registrazione != ?"
+                params_sibling = (id_dipendente, current_end.isoformat(), id_reg)
+                sibling_row = cursor.execute(query_sibling, params_sibling).fetchone()
+                if sibling_row: sibling_reg_id = sibling_row['id_registrazione']
+
+            # Caso 2: il segmento inizia a mezzanotte, cerca il gemello che finisce alla stessa ora
+            elif current_start.hour == 0 and current_start.minute == 0 and current_start.second == 0:
+                query_sibling = "SELECT id_registrazione FROM registrazioni_ore WHERE id_dipendente = ? AND data_ora_fine = ? AND id_registrazione != ?"
+                params_sibling = (id_dipendente, current_start.isoformat(), id_reg)
+                sibling_row = cursor.execute(query_sibling, params_sibling).fetchone()
+                if sibling_row: sibling_reg_id = sibling_row['id_registrazione']
+
+            # 3. Controlla le sovrapposizioni in modo intelligente
+            ids_da_escludere = [id_reg]
+            if sibling_reg_id:
+                ids_da_escludere.append(sibling_reg_id)
+
             conflitti = self.check_for_overlaps(
-                [id_dipendente], start_time, end_time, exclude_id=id_reg
+                [id_dipendente], start_time, end_time, exclude_ids=ids_da_escludere
             )
             if conflitti:
-                # Restituisce l'errore dettagliato
                 raise ValueError(f"Sovrapposizione rilevata: {conflitti[0]}")
-            
-            # 3. Esegui l'aggiornamento (SENZA SPLIT)
+
+            # 4. Se c'è un gemello, assicurati che la modifica non lo sovrapponga
+            if sibling_reg_id:
+                sibling_reg = self._get_registrazione(sibling_reg_id)
+                sibling_start = datetime.datetime.fromisoformat(sibling_reg['data_ora_inizio'])
+                sibling_end = datetime.datetime.fromisoformat(sibling_reg['data_ora_fine'])
+
+                # Il nuovo orario non deve "invadere" lo spazio del gemello
+                if start_time < sibling_end and end_time > sibling_start:
+                     raise ValueError("La modifica entra in conflitto con l'altra parte del turno diviso a mezzanotte.")
+
+            # 5. Esegui l'aggiornamento
             try:
                 cursor.execute("""
                     UPDATE registrazioni_ore
