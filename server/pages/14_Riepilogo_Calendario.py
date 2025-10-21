@@ -1,4 +1,4 @@
-# file: server/pages/14_Riepilogo_Calendario.py (NUOVO - Versione 16.3)
+# file: server/pages/14_Riepilogo_Calendario.py (NUOVO - Versione 16.9 - Filtri periodo flessibili)
 
 from __future__ import annotations
 import os
@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 from typing import Dict, List
+import calendar # Aggiunto per i nomi dei mesi
 
 # Aggiungiamo la root del progetto al path per importare i moduli 'core'
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -22,14 +23,48 @@ st.set_page_config(page_title="Calendario Pianificazione", page_icon="🗓️", 
 st.title("🗓️ Calendario Pianificazione Turni")
 st.markdown("Visione d'insieme (stile calendario) dei turni pianificati per Squadra o per Dipendente.")
 
-# --- 1. FILTRO SETTIMANALE E VISTA ---
+# --- 1. FILTRO PERIODO E VISTA ---
 with st.container(border=True):
     col1, col2 = st.columns(2)
+    today = date.today()
+
     with col1:
-        st.subheader("Seleziona la Settimana")
-        today = date.today()
-        start_of_week = today - timedelta(days=today.weekday()) # Trova Lunedì
-        selected_monday = st.date_input("Lunedì della settimana", value=start_of_week)
+        st.subheader("Seleziona il Periodo")
+        period_mode = st.radio(
+            "Modalità Periodo",
+            ["Settimana", "Mese", "Intervallo Personalizzato"],
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+        
+        if period_mode == "Settimana":
+            start_of_week = today - timedelta(days=today.weekday()) # Trova Lunedì
+            selected_monday = st.date_input("Lunedì della settimana", value=start_of_week)
+            start_date = selected_monday
+            end_date = selected_monday + timedelta(days=6) # Fino a Domenica
+        
+        elif period_mode == "Mese":
+            month_map = {i: calendar.month_name[i] for i in range(1, 13)}
+            
+            sel_col1, sel_col2 = st.columns(2)
+            selected_month = sel_col1.selectbox(
+                "Mese", 
+                options=list(month_map.keys()), 
+                format_func=lambda m: month_map[m],
+                index=today.month - 1
+            )
+            selected_year = sel_col2.number_input("Anno", value=today.year, min_value=2020, max_value=2050)
+            
+            start_date = date(selected_year, selected_month, 1)
+            last_day_of_month = calendar.monthrange(selected_year, selected_month)[1]
+            end_date = date(selected_year, selected_month, last_day_of_month)
+
+        else: # Intervallo Personalizzato
+            sel_col1, sel_col2 = st.columns(2)
+            default_start = today.replace(day=1)
+            start_date = sel_col1.date_input("Da data", value=default_start)
+            end_date = sel_col2.date_input("A data", value=today)
+
         
     with col2:
         st.subheader("Seleziona la Vista")
@@ -40,10 +75,11 @@ with st.container(border=True):
             label_visibility="collapsed"
         )
 
-start_date = selected_monday
-end_date = selected_monday + timedelta(days=6) # Fino a Domenica
+st.info(f"Visualizzazione dei turni che **iniziano** da **{start_date.strftime('%d/%m/%Y')}** a **{end_date.strftime('%d/%m/%Y')}**.")
 
-st.info(f"Visualizzazione dei turni che **iniziano** da **Lunedì {start_date.strftime('%d/%m')}** a **Domenica {end_date.strftime('%d/%m')}**.")
+if start_date > end_date:
+    st.error("Errore: La data di inizio non può essere successiva alla data di fine.")
+    st.stop()
 
 # --- 2. CARICAMENTO DATI PER L'INTERVALLO ---
 @st.cache_data(ttl=60)
@@ -73,7 +109,7 @@ except Exception as e:
     st.stop()
 
 if df_turni.empty:
-    st.warning("Nessun turno pianificato trovato per la settimana selezionata.")
+    st.warning("Nessun turno pianificato trovato per il periodo selezionato.")
     st.stop()
 
 # --- 3. PREPARAZIONE DATI PER PIVOT ---
@@ -93,8 +129,16 @@ df_turni['turno_info'] = df_turni.apply(
 df_turni['squadra'] = df_turni['id_dipendente'].map(dip_squadra_map).fillna("Non Assegnato")
 df_turni['dipendente_nome'] = df_turni['id_dipendente'].map(dip_nome_map).fillna("Sconosciuto")
 
-# Lista completa dei giorni della settimana
-week_days = [start_date + timedelta(days=i) for i in range(7)]
+# ★ MODIFICA: Lista completa dei giorni nell'intervallo selezionato
+all_days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+
+# ★ MODIFICA: Formattazione colonne dinamica
+if period_mode == "Settimana":
+    column_format_func = lambda col: col.strftime('%a %d/%m') if isinstance(col, date) else col
+else:
+    # Per Mese o Intervallo, rimuoviamo il giorno della settimana per risparmiare spazio
+    column_format_func = lambda col: col.strftime('%d/%m') if isinstance(col, date) else col
+
 
 # --- 4. FUNZIONE DI STYLING PER CELLE ---
 def highlight_cells(val):
@@ -121,9 +165,10 @@ if view_mode == "Squadra":
         values='turno_info',
         aggfunc='first', # Mostra il primo turno pianificato per la squadra
         fill_value='-'
-    ).reindex(index=squadre_index, columns=week_days, fill_value='-')
+    ).reindex(index=squadre_index, columns=all_days, fill_value='-')
     
-    df_pivot_turni_squadra.columns = [col.strftime('%a %d/%m') for col in df_pivot_turni_squadra.columns]
+    # Applica la formattazione dinamica
+    df_pivot_turni_squadra.columns = [column_format_func(col) for col in df_pivot_turni_squadra.columns]
     
     st.dataframe(
         df_pivot_turni_squadra.style.applymap(highlight_cells),
@@ -131,7 +176,7 @@ if view_mode == "Squadra":
     )
 
     # --- PIVOT PER LE ORE ---
-    st.subheader("Monte Ore Settimanale (per Squadra)")
+    st.subheader("Monte Ore per Squadra")
     st.markdown("Somma delle ore lavorate da tutti i membri della squadra.")
     
     df_pivot_ore_squadra = df_turni.pivot_table(
@@ -140,10 +185,12 @@ if view_mode == "Squadra":
         values='durata_ore',
         aggfunc='sum',
         fill_value=0
-    ).reindex(index=squadre_index, columns=week_days, fill_value=0)
+    ).reindex(index=squadre_index, columns=all_days, fill_value=0)
     
     df_pivot_ore_squadra['TOTALE ORE'] = df_pivot_ore_squadra.sum(axis=1)
-    df_pivot_ore_squadra.columns = [col.strftime('%a %d/%m') if isinstance(col, date) else col for col in df_pivot_ore_squadra.columns]
+    
+    # Applica la formattazione dinamica
+    df_pivot_ore_squadra.columns = [column_format_func(col) for col in df_pivot_ore_squadra.columns]
     
     st.dataframe(
         df_pivot_ore_squadra.style.format("{:.2f} h"),
@@ -166,9 +213,10 @@ else:
         values='turno_info',
         aggfunc='first',
         fill_value='-'
-    ).reindex(columns=week_days, fill_value='-')
+    ).reindex(columns=all_days, fill_value='-')
     
-    df_pivot_turni_dip.columns = [col.strftime('%a %d/%m') for col in df_pivot_turni_dip.columns]
+    # Applica la formattazione dinamica
+    df_pivot_turni_dip.columns = [column_format_func(col) for col in df_pivot_turni_dip.columns]
     
     st.dataframe(
         df_pivot_turni_dip.style.applymap(highlight_cells),
@@ -176,7 +224,7 @@ else:
     )
     
     # --- PIVOT PER LE ORE ---
-    st.subheader("Monte Ore Settimanale (per Dipendente)")
+    st.subheader("Monte Ore per Dipendente")
     st.markdown("Somma delle ore lavorate da ogni singolo dipendente.")
     
     df_pivot_ore_dip = df_turni.pivot_table(
@@ -185,10 +233,12 @@ else:
         values='durata_ore',
         aggfunc='sum',
         fill_value=0
-    ).reindex(columns=week_days, fill_value=0)
+    ).reindex(columns=all_days, fill_value=0)
     
     df_pivot_ore_dip['TOTALE ORE'] = df_pivot_ore_dip.sum(axis=1)
-    df_pivot_ore_dip.columns = [col.strftime('%a %d/%m') if isinstance(col, date) else col for col in df_pivot_ore_dip.columns]
+
+    # Applica la formattazione dinamica
+    df_pivot_ore_dip.columns = [column_format_func(col) for col in df_pivot_ore_dip.columns]
     
     st.dataframe(
         df_pivot_ore_dip.style.format("{:.2f} h"),
