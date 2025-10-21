@@ -1,4 +1,4 @@
-# file: server/pages/10_Pianificazione_Turni.py (Versione 16.6 - Corretto Input Custom)
+# file: server/pages/10_Pianificazione_Turni.py (Versione 16.7 - Blindata, Mostra TUTTE le attività)
 
 from __future__ import annotations
 import os
@@ -131,18 +131,23 @@ else:
                 "-1": "--- NESSUNA ATTIVITÀ SPECIFICA ---"
             }
 
-            if not df_schedule.empty and 'data_fine' in df_schedule.columns and 'id_attivita' in df_schedule.columns:
+            if not df_schedule.empty and 'id_attivita' in df_schedule.columns:
                 try:
-                    attività_attive = df_schedule[pd.to_datetime(df_schedule['data_fine']).dt.date >= date.today()]
+                    # ★★★ MODIFICA CHIAVE ★★★
+                    # Rimuoviamo il filtro sulla data per mostrare TUTTE le attività
+                    # La riga seguente (vecchia logica) è stata rimossa:
+                    # attività_attive = df_schedule[pd.to_datetime(df_schedule['data_fine']).dt.date >= date.today()]
+                    
+                    # Nuova logica: itera su tutto il df_schedule per caricarle tutte
                     opzioni_attivita.update({
                         row['id_attivita']: f"({row['id_attivita']}) - {row.get('descrizione', 'N/D')}"
-                        for _, row in attività_attive.iterrows() if pd.notna(row.get('id_attivita'))
+                        for _, row in df_schedule.iterrows() if pd.notna(row.get('id_attivita')) # Si usa df_schedule
                     })
                 except Exception as e:
-                    st.warning(f"Impossibile filtrare le attività: {e}")
+                    st.warning(f"Impossibile caricare l'elenco completo delle attività: {e}")
             
             attivita_selezionata_id = st.selectbox(
-                "Seleziona Attività (o Viaggio/Straordinario)",
+                "Seleziona Attività (TUTTE) (o Viaggio/Straordinario)",
                 options=opzioni_attivita.keys(),
                 format_func=lambda x: opzioni_attivita.get(x, x)
             )

@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 16.3 - Aggiunta funzione per Calendario)
+# file: core/crm_db.py (Versione 16.4 - BUG FIX Corretto per ON DELETE CASCADE)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -25,8 +25,13 @@ class CrmDBManager:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        """Stabilisce e restituisce una connessione al database."""
+        """
+        Stabilisce e restituisce una connessione al database.
+        ★ BUG FIX: Abilita il supporto alle foreign key (per ON DELETE CASCADE)
+        su OGNI connessione, non solo all'init.
+        """
         conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA foreign_keys = ON;") # <-- ★ BUG FIX ★
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -34,7 +39,8 @@ class CrmDBManager:
         """Inizializza lo schema del database."""
         with self._connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON;")
+            # La PRAGMA foreign_keys = ON è ora gestita in _connect()
+            # Non è più necessario eseguirla qui.
 
             # --- Tabelle Principali ---
             cursor.execute("""
@@ -334,6 +340,8 @@ def setup_initial_data():
     # Crea un'istanza temporanea solo per questa operazione
     try:
         conn = sqlite3.connect(DB_FILE)
+        # Abilita foreign keys anche qui per sicurezza
+        conn.execute("PRAGMA foreign_keys = ON;")
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM turni_standard")
 
