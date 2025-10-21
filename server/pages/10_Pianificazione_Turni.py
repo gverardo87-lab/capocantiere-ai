@@ -1,4 +1,4 @@
-# file: server/pages/10_Pianificazione_Turni.py (Versione 16.7 - Blindata, Mostra TUTTE le attività)
+# file: server/pages/10_Pianificazione_Turni.py (Versione 16.8 - Corretto bug radio/form)
 
 from __future__ import annotations
 import os
@@ -79,16 +79,23 @@ elif not dipendenti_map:
     st.warning("⚠️ ATTENZIONE: Nessun **Dipendente attivo** trovato nell'anagrafica.")
     st.info("Vai alla pagina 'Gestisci Anagrafica' per aggiungere personale.")
 else:
+    
+    # ★★★ BUG FIX ★★★
+    # Il selettore della modalità (Radio) deve stare FUORI dal form
+    # per permettere all'interfaccia di aggiornarsi dinamicamente.
+    st.markdown("##### 1. Tipo Inserimento")
+    tipo_inserimento = st.radio(
+        "Seleziona il tipo di inserimento",
+        ["Standard (da Turni Predefiniti)", "Custom (Orario Manuale)"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="tipo_inserimento_selector" # Chiave univoca
+    )
+    
     # Se i dati ci sono, mostra il form
     with st.form("planning_form"):
         
-        st.markdown("##### 1. Tipo Inserimento")
-        tipo_inserimento = st.radio(
-            "Seleziona il tipo di inserimento",
-            ["Standard (da Turni Predefiniti)", "Custom (Orario Manuale)"],
-            horizontal=True,
-            label_visibility="collapsed"
-        )
+        # Il radio button (punto 1) è stato spostato FUORI (sopra)
         
         st.markdown("##### 2. Dettagli Turno")
         col1, col2 = st.columns(2)
@@ -103,6 +110,7 @@ else:
         ora_fine_custom = time(13, 0) # Default 5 ore
 
         with col1:
+            # Questa logica ora funziona perché 'tipo_inserimento' è già impostato
             if tipo_inserimento == "Standard (da Turni Predefiniti)":
                 data_selezionata = st.date_input("Seleziona la data di inizio turno", date.today())
                 opzioni_turni = {t['id_turno']: f"{t['nome_turno']} ({t['ora_inizio']} - {t['ora_fine']})" for t in lista_turni}
@@ -112,7 +120,7 @@ else:
                     format_func=lambda x: opzioni_turni[x]
                 )
             else:
-                # ★ MODIFICA CHIAVE: Input separati per Data e Ora Custom ★
+                # Questa sezione ora apparirà immediatamente
                 st.markdown("**Massima Flessibilità (per Viaggi, ecc.)**")
                 subcol1, subcol2 = st.columns(2)
                 with subcol1:
@@ -133,15 +141,10 @@ else:
 
             if not df_schedule.empty and 'id_attivita' in df_schedule.columns:
                 try:
-                    # ★★★ MODIFICA CHIAVE ★★★
-                    # Rimuoviamo il filtro sulla data per mostrare TUTTE le attività
-                    # La riga seguente (vecchia logica) è stata rimossa:
-                    # attività_attive = df_schedule[pd.to_datetime(df_schedule['data_fine']).dt.date >= date.today()]
-                    
-                    # Nuova logica: itera su tutto il df_schedule per caricarle tutte
+                    # Logica per mostrare TUTTE le attività (dalla v. 16.7)
                     opzioni_attivita.update({
                         row['id_attivita']: f"({row['id_attivita']}) - {row.get('descrizione', 'N/D')}"
-                        for _, row in df_schedule.iterrows() if pd.notna(row.get('id_attivita')) # Si usa df_schedule
+                        for _, row in df_schedule.iterrows() if pd.notna(row.get('id_attivita'))
                     })
                 except Exception as e:
                     st.warning(f"Impossibile caricare l'elenco completo delle attività: {e}")
@@ -188,7 +191,6 @@ else:
                     data_ora_fine_effettiva = datetime.combine(giorno_fine, ora_fine)
                 
                 else: # Modalità Custom
-                    # ★ MODIFICA CHIAVE: Combina date e ore dagli input custom ★
                     data_ora_inizio_effettiva = datetime.combine(data_inizio_custom, ora_inizio_custom)
                     data_ora_fine_effettiva = datetime.combine(data_fine_custom, ora_fine_custom)
                     
