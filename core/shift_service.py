@@ -1,4 +1,4 @@
-# core/shift_service.py (Versione 16.0 - Architettura Service Layer Centrale)
+# core/shift_service.py (Versione 16.3 - Aggiunta funzione per Calendario)
 from __future__ import annotations
 import datetime
 from typing import List, Dict, Any, Optional
@@ -157,6 +157,10 @@ class ShiftService:
 
     def get_turni_master_giorno_df(self, giorno: datetime.date) -> pd.DataFrame:
         return self.db_manager.get_turni_master_giorno_df(giorno)
+    
+    # ★ NUOVO METODO PASS-THROUGH ★
+    def get_turni_master_range_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
+        return self.db_manager.get_turni_master_range_df(start_date, end_date)
         
     def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
         return self.db_manager.get_report_data_df(start_date, end_date)
@@ -194,4 +198,4 @@ _db_dao = CrmDBManager(DB_FILE)
 # QUESTA è l'unica variabile che le pagine Streamlit importeranno
 shift_service = ShiftService(db_manager=_db_dao)
 
-print("✅ ShiftService e CrmDBManager inizializzati correttamente (Architettura 16.0)")
+print("✅ ShiftService e CrmDBManager inizializzati correttamente (Architettura 16.3)")

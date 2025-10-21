@@ -1,4 +1,4 @@
-# server/app.py (Versione Pulita - Solo CRM - Nomi file corretti)
+# server/app.py (Versione 16.3 - Aggiunto Calendario Squadre)
 
 from __future__ import annotations
 import os
@@ -54,9 +54,11 @@ with st.sidebar:
     st.markdown("---")
     
     st.markdown("Benvenuto nel sistema di gestione CRM.")
-    # ★ LINK AGGIORNATI SENZA EMOJI ★
     st.page_link("pages/10_Pianificazione_Turni.py", label="Pianifica Turni", icon="📅")
     st.page_link("pages/13_Control_Room_Ore.py", label="Control Room Ore", icon="✏️")
+    
+    # ★ NUOVA PAGINA ★
+    st.page_link("pages/14_Riepilogo_Calendario.py", label="Calendario Squadre", icon="🗓️")
     
     st.markdown("---")
     st.header("Configurazione")
@@ -71,25 +73,29 @@ st.divider()
 
 # --- KPI E ACCESSI RAPIDI AL CRM ---
 st.header("Controllo Manodopera (CRM)")
-col_crm1, col_crm2, col_crm3 = st.columns(3)
+col_crm1, col_crm2, col_crm3, col_crm4 = st.columns(4) # Aggiunta una colonna
 with col_crm1:
     with st.container(border=True):
         st.subheader("📅 Pianificazione")
         st.markdown("Assegna **squadre** ai turni e alle attività in pochi click.")
-        # ★ LINK AGGIORNATI SENZA EMOJI ★
         st.page_link("pages/10_Pianificazione_Turni.py", label="Vai alla Pianificazione", icon="📅")
 with col_crm2:
     with st.container(border=True):
         st.subheader("✏️ Control Room")
         st.markdown("Gestisci **eccezioni**, interruzioni e modifica i singoli orari.")
-        # ★ LINK AGGIORNATI SENZA EMOJI ★
         st.page_link("pages/13_Control_Room_Ore.py", label="Vai alla Control Room", icon="✏️")
 with col_crm3:
     with st.container(border=True):
         st.subheader("📊 Consuntivo")
         st.markdown("Analizza le **ore totali** per dipendente, attività e commessa.")
-        # ★ LINK AGGIORNATI SENZA EMOJI ★
         st.page_link("pages/01_Reportistica.py", label="Vai al Consuntivo", icon="📊")
+
+# ★ NUOVO BLOCCO ★
+with col_crm4:
+    with st.container(border=True):
+        st.subheader("🗓️ Calendario")
+        st.markdown("Visualizza il **calendario settimanale** per squadra e dipendente.")
+        st.page_link("pages/14_Riepilogo_Calendario.py", label="Vai al Calendario", icon="🗓️")
 
 st.divider()
 
@@ -99,13 +105,11 @@ with col1:
     with st.container(border=True):
         st.subheader("📈 Cronoprogramma")
         st.markdown("Visualizza il **diagramma di Gantt** delle attività e monitora l'avanzamento.")
-        # ★ LINK AGGIORNATI SENZA EMOJI ★
         st.page_link("pages/04_Cronoprogramma.py", label="Visualizza Gantt", icon="📈")
 with col2:
     with st.container(border=True):
         st.subheader("⚙️ Analisi Workflow")
         st.markdown("Ottimizza l'**allocazione delle risorse** e identifica i colli di bottiglia.")
-        # ★ LINK AGGIORNATI SENZA EMOJI ★
         st.page_link("pages/05_Workflow_Analysis.py", label="Analizza Workflow", icon="⚙️")
 
 col_chat, col_expert = st.columns(2)
@@ -113,11 +117,9 @@ with col_chat:
     with st.container(border=True):
         st.subheader("👨‍🔧 Esperto Tecnico")
         st.markdown("Poni domande complesse sulla **documentazione tecnica**.")
-        # ★ LINK AGGIORNATI SENZA EMOJI ★
         st.page_link("pages/03_Esperto_Tecnico.py", label="Interroga l'Esperto", icon="👨‍🔧")
 with col_expert:
     with st.container(border=True):
         st.subheader("📚 Esplora Documenti")
         st.markdown("Naviga e visualizza l'**archivio documentale** tecnico.")
-        # ★ LINK AGGIORNATI SENZA EMOJI ★
         st.page_link("pages/06_Document_Explorer.py", label="Esplora Archivio", icon="📚")

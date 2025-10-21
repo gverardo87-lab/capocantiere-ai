@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 16.0 - Architettura DAO Pura)
+# file: core/crm_db.py (Versione 16.3 - Aggiunta funzione per Calendario)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -36,7 +36,6 @@ class CrmDBManager:
             cursor = conn.cursor()
             cursor.execute("PRAGMA foreign_keys = ON;")
 
-            # (Lo schema delle tabelle è invariato, lo ometto per brevità)
             # --- Tabelle Principali ---
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS anagrafica_dipendenti (
@@ -257,7 +256,8 @@ class CrmDBManager:
         SELECT 
             m.id_turno_master, a.cognome, a.nome,
             m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva,
-            m.id_attivita, m.note, a.ruolo, m.id_dipendente
+            m.id_attivita, m.note, a.ruolo, m.id_dipendente,
+            a.cognome || ' ' || a.nome AS dipendente_nome
         FROM turni_master m
         JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente
         WHERE (date(m.data_ora_inizio_effettiva) = ? OR date(m.data_ora_fine_effettiva) = ?)
@@ -275,6 +275,35 @@ class CrmDBManager:
                 row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva']
             ), axis=1)
         return df.set_index('id_turno_master')
+
+    # ★ NUOVO METODO PER IL CALENDARIO ★
+    def get_turni_master_range_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
+        """Estrae tutti i turni master che INIZIANO in un intervallo di date."""
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
+        query = """
+        SELECT 
+            m.id_turno_master, a.cognome, a.nome,
+            m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva,
+            m.id_attivita, m.note, a.ruolo, m.id_dipendente,
+            a.cognome || ' ' || a.nome AS dipendente_nome
+        FROM turni_master m
+        JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente
+        WHERE date(m.data_ora_inizio_effettiva) BETWEEN ? AND ?
+        ORDER BY a.cognome, m.data_ora_inizio_effettiva
+        """
+        with self._connect() as conn:
+            df = pd.read_sql_query(
+                query, 
+                conn, 
+                params=(start_str, end_str), 
+                parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva']
+            )
+        if not df.empty:
+            df['durata_ore'] = df.apply(lambda row: calculate_duration_hours(
+                row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva']
+            ), axis=1)
+        return df
 
     def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
         start_str = start_date.isoformat()
