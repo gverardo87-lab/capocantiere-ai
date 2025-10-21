@@ -1,4 +1,4 @@
-# file: server/pages/01_Reportistica.py (Versione 16.0 - Architettura Service)
+# file: server/pages/01_Reportistica.py (Versione 16.4 - Mappatura Attività Speciali)
 
 from __future__ import annotations
 import os
@@ -29,21 +29,32 @@ st.markdown("Dashboard di analisi aggregata delle ore per la contabilità giorna
 @st.cache_data(ttl=60)
 def load_activities_map():
     """Crea un dizionario (mappa) di ID Attività -> Descrizione."""
+    # ★ NUOVO: Mappa di base per attività speciali ★
+    activities_map = {
+        "VIAGGIO": "VIAGGIO (Trasferta)",
+        "STRAORDINARIO": "STRAORDINARIO (Generico)",
+        "OFFICINA": "OFFICINA (Lavoro Interno)"
+    }
+    
     try:
         schedule_data = schedule_db_manager.get_schedule_data()
         df_schedule = pd.DataFrame(schedule_data)
         if not df_schedule.empty:
-            return df_schedule.set_index('id_attivita')['descrizione'].to_dict()
+            # Sovrascrive la mappa di base solo con le attività di schedule
+            schedule_map = df_schedule.set_index('id_attivita')['descrizione'].to_dict()
+            activities_map.update(schedule_map)
     except Exception as e:
         print(f"Errore caricamento cronoprogramma: {e}")
-    return {}
+        
+    return activities_map
 
-activities_map = load_activities_map()
+activities_map_cached = load_activities_map()
 
 def map_activity_id(id_att):
     if pd.isna(id_att) or id_att == "-1":
-        return "N/A (Officina/Altro)"
-    return activities_map.get(id_att, f"Attività Sconosciuta ({id_att})")
+        return "N/A (Non Specificato)"
+    # Usa la mappa cache per trovare la descrizione
+    return activities_map_cached.get(id_att, f"Attività Sconosciuta ({id_att})")
 
 st.subheader("Pannello di Controllo")
 with st.container(border=True):
@@ -84,6 +95,7 @@ try:
             axis=1
         )
 
+        # ★ MODIFICATO: Usa la nuova funzione di mappatura ★
         df_raw_report['desc_attivita'] = df_raw_report['id_attivita'].apply(map_activity_id)
         
         # Aggregazioni
@@ -129,6 +141,7 @@ with col_chart:
 
 with col_table:
     st.subheader("Ore per Attività")
+    st.markdown("Ora include 'VIAGGIO' e 'STRAORDINARIO' se registrati.")
     st.dataframe(
         df_attivita,
         use_container_width=True,
