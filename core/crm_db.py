@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 17.0 - Doppio Binario: Presenza/Lavoro)
+# file: core/crm_db.py (Versione 17.1 - FIX: Reintegrato update_squadra_details)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -283,6 +283,15 @@ class CrmDBManager:
             return pd.read_sql_query(query, conn, params=(start_str, end_str), parse_dates=['data_ora_inizio', 'data_ora_fine'])
 
     # --- METODI MANUTENZIONE ---
+
+    def update_squadra_details(self, id_squadra: int, nome_squadra: str, id_caposquadra: Optional[int]):
+        """Aggiorna nome e caposquadra di una squadra esistente."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE squadre SET nome_squadra = ?, id_caposquadra = ? WHERE id_squadra = ?",
+                (nome_squadra, id_caposquadra, id_squadra)
+            )
+            conn.commit()
 
     def delete_turno_master(self, cursor: sqlite3.Cursor, id_turno_master: int):
         cursor.execute("DELETE FROM turni_master WHERE id_turno_master = ?", (id_turno_master,))
