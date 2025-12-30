@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 27.0 - Enterprise Edition: HR Transfer + Override)
+# file: core/crm_db.py (Versione 28.1 - Fix Smart Delete)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -7,35 +7,25 @@ import datetime
 import pandas as pd
 from contextlib import contextmanager
 
-# Importa la logica per calcoli rapidi in lettura (necessaria per le view)
 from core.logic import ShiftEngine
 
-# Percorso DB (esportato per il service)
 DB_FILE = Path(__file__).resolve().parents[1] / "data" / "crm.db"
 
 class CrmDBManager:
-    """
-    Data Access Layer (DAO) per il modulo CRM.
-    Gestisce le query SQL, inclusa la logica per HR Transfer, Cambio Turno e Doppio Binario.
-    """
     def __init__(self, db_path: str | Path = DB_FILE):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(exist_ok=True)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        """Stabilisce la connessione e abilita le Foreign Keys per il CASCADE DELETE."""
         conn = sqlite3.connect(self.db_path)
         conn.execute("PRAGMA foreign_keys = ON;") 
         conn.row_factory = sqlite3.Row
         return conn
 
     def _init_schema(self):
-        """Inizializza lo schema includendo le colonne per il calcolo professionale."""
         with self._connect() as conn:
             cursor = conn.cursor()
-
-            # --- Tabelle Anagrafica e Squadre ---
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS anagrafica_dipendenti (
                 id_dipendente INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +34,6 @@ class CrmDBManager:
                 ruolo TEXT,
                 attivo BOOLEAN DEFAULT 1 NOT NULL
             )""")
-            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS squadre (
                 id_squadra INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +41,6 @@ class CrmDBManager:
                 id_caposquadra INTEGER,
                 FOREIGN KEY (id_caposquadra) REFERENCES anagrafica_dipendenti (id_dipendente)
             )""")
-            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS membri_squadra (
                 id_squadra INTEGER,
@@ -61,7 +49,6 @@ class CrmDBManager:
                 FOREIGN KEY (id_squadra) REFERENCES squadre (id_squadra) ON DELETE CASCADE,
                 FOREIGN KEY (id_dipendente) REFERENCES anagrafica_dipendenti (id_dipendente)
             )""")
-            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS turni_standard (
                 id_turno TEXT PRIMARY KEY,
@@ -70,8 +57,6 @@ class CrmDBManager:
                 ora_fine TIME NOT NULL,
                 scavalca_mezzanotte BOOLEAN NOT NULL
             )""")
-
-            # --- Architettura Turni Master ---
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS turni_master (
                 id_turno_master INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,8 +67,6 @@ class CrmDBManager:
                 id_attivita TEXT,
                 FOREIGN KEY (id_dipendente) REFERENCES anagrafica_dipendenti (id_dipendente)
             )""")
-
-            # --- Registrazioni Ore (Doppio Binario) ---
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS registrazioni_ore (
                 id_registrazione INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,14 +75,13 @@ class CrmDBManager:
                 id_attivita TEXT,
                 data_ora_inizio DATETIME NOT NULL,
                 data_ora_fine DATETIME NOT NULL,
-                ore_presenza REAL,  -- Ore per la busta paga
-                ore_lavoro REAL,    -- Ore effettive per il cantiere (netto pause)
+                ore_presenza REAL,
+                ore_lavoro REAL,
                 tipo_ore TEXT DEFAULT 'Cantiere',
                 note TEXT,
                 FOREIGN KEY (id_dipendente) REFERENCES anagrafica_dipendenti (id_dipendente),
                 FOREIGN KEY (id_turno_master) REFERENCES turni_master (id_turno_master) ON DELETE CASCADE
             )""")
-
             conn.commit()
 
     @contextmanager
@@ -116,8 +98,7 @@ class CrmDBManager:
         finally:
             conn.close()
 
-    # --- METODI DAO SCRITTURA (ANAGRAFICA & SQUADRE) ---
-    
+    # --- METODI SCRITTURA ---
     def add_dipendente(self, nome: str, cognome: str, ruolo: str) -> int:
         with self._connect() as conn:
             cursor = conn.execute("INSERT INTO anagrafica_dipendenti (nome, cognome, ruolo) VALUES (?, ?, ?)", (nome, cognome, ruolo))
@@ -126,8 +107,7 @@ class CrmDBManager:
 
     def update_dipendente_field(self, id_dipendente: int, field_name: str, new_value):
         with self._connect() as conn:
-            query = f"UPDATE anagrafica_dipendenti SET {field_name} = ? WHERE id_dipendente = ?"
-            conn.execute(query, (new_value, id_dipendente))
+            conn.execute(f"UPDATE anagrafica_dipendenti SET {field_name} = ? WHERE id_dipendente = ?", (new_value, id_dipendente))
             conn.commit()
 
     def add_squadra(self, nome_squadra: str, id_caposquadra: Optional[int]) -> int:
@@ -136,63 +116,45 @@ class CrmDBManager:
             try:
                 cursor.execute("BEGIN TRANSACTION")
                 cursor.execute("INSERT INTO squadre (nome_squadra, id_caposquadra) VALUES (?, ?)", (nome_squadra, id_caposquadra))
-                new_squadra_id = cursor.lastrowid
+                nid = cursor.lastrowid
                 if id_caposquadra is not None:
-                    cursor.execute("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", (new_squadra_id, id_caposquadra))
+                    cursor.execute("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", (nid, id_caposquadra))
                 conn.commit()
-                return new_squadra_id
+                return nid
             except Exception as e:
-                conn.rollback()
-                raise e
+                conn.rollback(); raise e
 
     def update_membri_squadra(self, id_squadra: int, membri_ids: List[int]):
-        """Aggiorna massivamente i membri di una squadra (usato nell'editor squadre)."""
         with self._connect() as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute("BEGIN TRANSACTION")
                 cursor.execute("DELETE FROM membri_squadra WHERE id_squadra = ?", (id_squadra,))
                 if membri_ids:
-                    data_to_insert = [(id_squadra, id_dip) for id_dip in list(set(membri_ids))]
-                    cursor.executemany("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", data_to_insert)
+                    cursor.executemany("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", [(id_squadra, mid) for mid in list(set(membri_ids))])
                 conn.commit()
             except Exception as e:
-                conn.rollback()
-                raise e
+                conn.rollback(); raise e
 
     def update_squadra_details(self, id_squadra: int, nome_squadra: str, id_caposquadra: Optional[int]):
-        """Aggiorna nome e caposquadra di una squadra esistente."""
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE squadre SET nome_squadra = ?, id_caposquadra = ? WHERE id_squadra = ?",
-                (nome_squadra, id_caposquadra, id_squadra)
-            )
+            conn.execute("UPDATE squadre SET nome_squadra = ?, id_caposquadra = ? WHERE id_squadra = ?", (nome_squadra, id_caposquadra, id_squadra))
             conn.commit()
 
     def transfer_dipendente_to_squadra(self, id_dipendente: int, id_nuova_squadra: int):
-        """
-        [HR TRANSFER - NEW] Sposta strutturalmente un dipendente in una nuova squadra.
-        Rimuove il dipendente da QUALSIASI altra squadra prima di assegnarlo alla nuova.
-        """
         with self._connect() as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute("BEGIN TRANSACTION")
-                # 1. Pulizia: Rimuovi da tutte le squadre attuali
                 cursor.execute("DELETE FROM membri_squadra WHERE id_dipendente = ?", (id_dipendente,))
-                # 2. Assegnazione: Inserisci nella nuova squadra
                 cursor.execute("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", (id_nuova_squadra, id_dipendente))
                 conn.commit()
             except Exception as e:
-                conn.rollback()
-                raise e
+                conn.rollback(); raise e
 
     def delete_squadra(self, id_squadra: int):
         with self._connect() as conn:
-            conn.execute("DELETE FROM squadre WHERE id_squadra = ?", (id_squadra,))
-            conn.commit()
-
-    # --- METODI SCRITTURA (TURNI) ---
+            conn.execute("DELETE FROM squadre WHERE id_squadra = ?", (id_squadra,)); conn.commit()
 
     def create_turno_master(self, cursor: sqlite3.Cursor, shift_data: Dict[str, Any]) -> int:
         query = "INSERT INTO turni_master (id_dipendente, data_ora_inizio_effettiva, data_ora_fine_effettiva, id_attivita, note) VALUES (?, ?, ?, ?, ?)"
@@ -202,21 +164,11 @@ class CrmDBManager:
 
     def update_turno_master(self, cursor: sqlite3.Cursor, id_master: int, start_time: datetime.datetime, end_time: datetime.datetime, id_attivita: Optional[str], note: Optional[str]):
         cursor.execute("DELETE FROM registrazioni_ore WHERE id_turno_master = ?", (id_master,))
-        query = "UPDATE turni_master SET data_ora_inizio_effettiva = ?, data_ora_fine_effettiva = ?, id_attivita = ?, note = ? WHERE id_turno_master = ?"
         params = (start_time.isoformat(), end_time.isoformat(), id_attivita, note, id_master)
-        cursor.execute(query, params)
+        cursor.execute("UPDATE turni_master SET data_ora_inizio_effettiva = ?, data_ora_fine_effettiva = ?, id_attivita = ?, note = ? WHERE id_turno_master = ?", params)
 
     def create_registrazioni_segments(self, cursor: sqlite3.Cursor, segments: List[tuple]):
-        """
-        Salva i segmenti splittati. 
-        Riceve tuple con: (id_master, id_dip, id_att, start, end, ore_presenza, ore_lavoro, note)
-        """
-        query = """
-        INSERT INTO registrazioni_ore (
-            id_turno_master, id_dipendente, id_attivita, 
-            data_ora_inizio, data_ora_fine, ore_presenza, ore_lavoro, note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """
+        query = "INSERT INTO registrazioni_ore (id_turno_master, id_dipendente, id_attivita, data_ora_inizio, data_ora_fine, ore_presenza, ore_lavoro, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         cursor.executemany(query, segments)
 
     def delete_turno_master(self, cursor: sqlite3.Cursor, id_turno_master: int):
@@ -224,20 +176,15 @@ class CrmDBManager:
 
     def insert_turno_standard(self, id_turno: str, nome: str, inizio: str, fine: str, scavalca: bool):
          with self._connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO turni_standard (id_turno, nome_turno, ora_inizio, ora_fine, scavalca_mezzanotte) VALUES (?, ?, ?, ?, ?)",
-                (id_turno, nome, inizio, fine, scavalca)
-            )
+            conn.execute("INSERT OR REPLACE INTO turni_standard (id_turno, nome_turno, ora_inizio, ora_fine, scavalca_mezzanotte) VALUES (?, ?, ?, ?, ?)", (id_turno, nome, inizio, fine, scavalca))
             conn.commit()
 
-    # --- METODI DAO LETTURA ---
-
+    # --- METODI LETTURA ---
     def get_dipendenti_df(self, solo_attivi: bool = False) -> pd.DataFrame:
-        query = "SELECT id_dipendente, nome, cognome, ruolo, attivo FROM anagrafica_dipendenti"
-        if solo_attivi: query += " WHERE attivo = 1"
-        query += " ORDER BY cognome, nome"
-        with self._connect() as conn:
-            return pd.read_sql_query(query, conn, index_col="id_dipendente")
+        q = "SELECT id_dipendente, nome, cognome, ruolo, attivo FROM anagrafica_dipendenti"
+        if solo_attivi: q += " WHERE attivo = 1"
+        q += " ORDER BY cognome, nome"
+        with self._connect() as conn: return pd.read_sql_query(q, conn, index_col="id_dipendente")
 
     def get_turni_standard(self) -> List[Dict[str, Any]]:
          with self._connect() as conn:
@@ -255,122 +202,60 @@ class CrmDBManager:
             return [row['id_dipendente'] for row in rows]
 
     def check_for_master_overlaps(self, id_dipendente: int, start_time: datetime.datetime, end_time: datetime.datetime, exclude_master_id: Optional[int] = None) -> bool:
-        query = "SELECT 1 FROM turni_master WHERE id_dipendente = ? AND data_ora_inizio_effettiva < ? AND data_ora_fine_effettiva > ?"
-        params = [id_dipendente, end_time.isoformat(), start_time.isoformat()]
-        if exclude_master_id is not None:
-            query += " AND id_turno_master != ?"
-            params.append(exclude_master_id)
-        with self._connect() as conn:
-            return conn.execute(query, tuple(params)).fetchone() is not None
+        q = "SELECT 1 FROM turni_master WHERE id_dipendente = ? AND data_ora_inizio_effettiva < ? AND data_ora_fine_effettiva > ?"
+        p = [id_dipendente, end_time.isoformat(), start_time.isoformat()]
+        if exclude_master_id:
+            q += " AND id_turno_master != ?"
+            p.append(exclude_master_id)
+        with self._connect() as conn: return conn.execute(q, tuple(p)).fetchone() is not None
 
     def get_turno_master(self, cursor: sqlite3.Cursor, id_turno_master: int) -> Optional[sqlite3.Row]:
         cursor.execute("SELECT * FROM turni_master WHERE id_turno_master = ?", (id_turno_master,))
         return cursor.fetchone()
 
-    def get_turni_by_dipendente_date(self, id_dipendente: int, target_date: datetime.date) -> List[int]:
-        """
-        [NEW] Restituisce gli ID dei turni di un dipendente che intersecano una data specifica.
-        Fondamentale per la pulizia preventiva (Override) durante il cambio turno.
-        """
-        start_day = datetime.datetime.combine(target_date, datetime.time.min)
-        end_day = datetime.datetime.combine(target_date, datetime.time.max)
-        
-        query = """
-        SELECT id_turno_master FROM turni_master 
-        WHERE id_dipendente = ? 
-        AND (
-            (data_ora_inizio_effettiva BETWEEN ? AND ?) OR
-            (data_ora_fine_effettiva BETWEEN ? AND ?) OR
-            (data_ora_inizio_effettiva <= ? AND data_ora_fine_effettiva >= ?)
-        )
-        """
+    # --- NUOVO: METODO PER LEGGERE DETTAGLI SENZA CURSOR (Per Smart Delete) ---
+    def get_turno_master_details(self, id_turno_master: int) -> Optional[Dict[str, Any]]:
+        """Restituisce i dettagli del turno master (per controlli logici)."""
         with self._connect() as conn:
-            rows = conn.execute(query, (
-                id_dipendente, 
-                start_day.isoformat(), end_day.isoformat(),
-                start_day.isoformat(), end_day.isoformat(),
-                start_day.isoformat(), end_day.isoformat()
-            )).fetchall()
+            row = conn.execute("SELECT * FROM turni_master WHERE id_turno_master = ?", (id_turno_master,)).fetchone()
+            return dict(row) if row else None
+
+    def get_turni_by_dipendente_date(self, id_dipendente: int, target_date: datetime.date) -> List[int]:
+        s = datetime.datetime.combine(target_date, datetime.time.min)
+        e = datetime.datetime.combine(target_date, datetime.time.max)
+        q = "SELECT id_turno_master FROM turni_master WHERE id_dipendente = ? AND ((data_ora_inizio_effettiva BETWEEN ? AND ?) OR (data_ora_fine_effettiva BETWEEN ? AND ?) OR (data_ora_inizio_effettiva <= ? AND data_ora_fine_effettiva >= ?))"
+        with self._connect() as conn:
+            rows = conn.execute(q, (id_dipendente, s.isoformat(), e.isoformat(), s.isoformat(), e.isoformat(), s.isoformat(), e.isoformat())).fetchall()
             return [row['id_turno_master'] for row in rows]
 
     def get_turni_master_giorno_df(self, giorno: datetime.date) -> pd.DataFrame:
-        giorno_str = giorno.isoformat()
-        query = """
-        SELECT 
-            m.id_turno_master, a.cognome, a.nome,
-            m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva,
-            m.id_attivita, m.note, a.ruolo, m.id_dipendente,
-            a.cognome || ' ' || a.nome AS dipendente_nome
-        FROM turni_master m
-        JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente
-        WHERE (date(m.data_ora_inizio_effettiva) = ? OR date(m.data_ora_fine_effettiva) = ?)
-        ORDER BY a.cognome, m.data_ora_inizio_effettiva
-        """
+        g_str = giorno.isoformat()
+        q = "SELECT m.id_turno_master, a.cognome, a.nome, m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva, m.id_attivita, m.note, a.ruolo, m.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome FROM turni_master m JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente WHERE (date(m.data_ora_inizio_effettiva) = ? OR date(m.data_ora_fine_effettiva) = ?) ORDER BY a.cognome, m.data_ora_inizio_effettiva"
         with self._connect() as conn:
-            df = pd.read_sql_query(query, conn, params=(giorno_str, giorno_str), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
+            df = pd.read_sql_query(q, conn, params=(g_str, g_str), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
         if not df.empty:
-            # Calcolo visuale della durata (presenza lorda)
-            df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(
-                row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva']
-            )[0], axis=1)
+            df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva'])[0], axis=1)
         return df.set_index('id_turno_master')
 
     def get_turni_master_range_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        start_str = start_date.isoformat()
-        end_str = end_date.isoformat()
-        query = """
-        SELECT 
-            m.id_turno_master, a.cognome, a.nome,
-            m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva,
-            m.id_attivita, m.note, a.ruolo, m.id_dipendente,
-            a.cognome || ' ' || a.nome AS dipendente_nome
-        FROM turni_master m
-        JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente
-        WHERE date(m.data_ora_inizio_effettiva) BETWEEN ? AND ?
-        ORDER BY a.cognome, m.data_ora_inizio_effettiva
-        """
+        q = "SELECT m.id_turno_master, a.cognome, a.nome, m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva, m.id_attivita, m.note, a.ruolo, m.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome FROM turni_master m JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente WHERE date(m.data_ora_inizio_effettiva) BETWEEN ? AND ? ORDER BY a.cognome, m.data_ora_inizio_effettiva"
         with self._connect() as conn:
-            df = pd.read_sql_query(query, conn, params=(start_str, end_str), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
-        if not df.empty:
-            df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(
-                row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva']
-            )[0], axis=1)
-        return df
+            return pd.read_sql_query(q, conn, params=(start_date.isoformat(), end_date.isoformat()), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
 
     def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        """
-        Estrae i dati per la reportistica includendo le colonne Presenza e Lavoro.
-        """
-        start_str = start_date.isoformat()
-        end_str = end_date.isoformat()
-        query = """
-        SELECT
-            r.id_registrazione, r.data_ora_inizio, r.data_ora_fine, r.id_attivita,
-            r.ore_presenza, r.ore_lavoro,
-            r.tipo_ore, a.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome,
-            a.ruolo, r.id_turno_master
-        FROM registrazioni_ore r
-        JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente
-        WHERE date(r.data_ora_inizio) BETWEEN ? AND ?
-          AND a.attivo = 1
-          AND r.data_ora_inizio IS NOT NULL
-          AND r.data_ora_fine IS NOT NULL
-        """
+        q = "SELECT r.id_registrazione, r.data_ora_inizio, r.data_ora_fine, r.id_attivita, r.ore_presenza, r.ore_lavoro, r.tipo_ore, a.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome, a.ruolo, r.id_turno_master FROM registrazioni_ore r JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente WHERE date(r.data_ora_inizio) BETWEEN ? AND ? AND a.attivo = 1 AND r.data_ora_inizio IS NOT NULL AND r.data_ora_fine IS NOT NULL"
         with self._connect() as conn:
-            return pd.read_sql_query(query, conn, params=(start_str, end_str), parse_dates=['data_ora_inizio', 'data_ora_fine'])
+            return pd.read_sql_query(q, conn, params=(start_date.isoformat(), end_date.isoformat()), parse_dates=['data_ora_inizio', 'data_ora_fine'])
 
 def setup_initial_data():
-    """Popola i turni standard se il database è vuoto."""
     try:
         conn = sqlite3.connect(DB_FILE)
         conn.execute("PRAGMA foreign_keys = ON;")
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM turni_standard")
         if cursor.fetchone()[0] == 0:
-            print("Popolamento turni standard iniziali...")
             db_manager_temp = CrmDBManager(DB_FILE)
             db_manager_temp.insert_turno_standard("GIORNO_08_18", "Turno di Giorno (8-18)", "08:00:00", "18:00:00", False)
             db_manager_temp.insert_turno_standard("NOTTE_20_06", "Turno di Notte (20-06)", "20:00:00", "06:00:00", True)
         conn.close()
-    except Exception as e:
-        print(f"Errore durante setup_initial_data: {e}")
+    except Exception as e: print(f"Errore setup: {e}")
