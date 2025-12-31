@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 28.3 - Stable Fix)
+# file: core/crm_db.py (Versione 29.0 - Fix Calendario Scientifico)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -26,6 +26,7 @@ class CrmDBManager:
     def _init_schema(self):
         with self._connect() as conn:
             cursor = conn.cursor()
+            # ... (Schema invariato, lo mantengo compatto per leggibilità) ...
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS anagrafica_dipendenti (
                 id_dipendente INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -235,17 +236,41 @@ class CrmDBManager:
             df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva'])[0], axis=1)
         return df.set_index('id_turno_master')
 
+    # --- ★★★ FIX SCIENTIFICO PER CALENDARIO ★★★ ---
     def get_turni_master_range_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        q = "SELECT m.id_turno_master, a.cognome, a.nome, m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva, m.id_attivita, m.note, a.ruolo, m.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome FROM turni_master m JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente WHERE date(m.data_ora_inizio_effettiva) BETWEEN ? AND ? ORDER BY a.cognome, m.data_ora_inizio_effettiva"
-        with self._connect() as conn:
-            df = pd.read_sql_query(q, conn, params=(start_date.isoformat(), end_date.isoformat()), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
+        """
+        [FIX 29.0] Recupera i turni per il calendario leggendo DIRETTAMENTE dai segmenti (registrazioni_ore).
+        In questo modo, se un turno scavalca la mezzanotte, il calendario vedrà DUE segmenti distinti
+        assegnati ai rispettivi giorni, garantendo che la somma delle ore per giorno sia esatta (es. 10h totali).
+        """
+        start_str = start_date.isoformat()
+        end_str = end_date.isoformat()
         
-        # --- ★ FIX KEYERROR: Calcolo durata_ore se il DF non è vuoto ---
-        if not df.empty:
-            df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(
-                row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva']
-            )[0], axis=1) # [0] prende le ore_presenza
-        # -------------------------------------------------------------
+        # Query che preleva i SEGMENTI reali (già splittati)
+        # Rinominiamo le colonne per far credere al frontend che siano turni_master normali
+        query = """
+        SELECT 
+            r.id_turno_master, -- Manteniamo ID master per riferimento
+            a.cognome, 
+            a.nome, 
+            r.data_ora_inizio AS data_ora_inizio_effettiva, -- Orario del segmento, non del master
+            r.data_ora_fine AS data_ora_fine_effettiva,
+            r.id_attivita, 
+            r.note, 
+            a.ruolo, 
+            r.id_dipendente,
+            a.cognome || ' ' || a.nome AS dipendente_nome,
+            r.ore_presenza AS durata_ore -- Prendiamo l'ora GIA' calcolata e salvata
+        FROM registrazioni_ore r
+        JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente
+        WHERE date(r.data_ora_inizio) BETWEEN ? AND ?
+        ORDER BY a.cognome, r.data_ora_inizio
+        """
+        
+        with self._connect() as conn:
+            df = pd.read_sql_query(query, conn, params=(start_str, end_str), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
+        
+        # Non serve ricalcolare durata_ore perché la prendiamo direttamente dal DB (ore_presenza)
         return df
 
     def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
