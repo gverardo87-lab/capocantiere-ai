@@ -1,5 +1,5 @@
-# file: server/pages/10_Pianificazione_Turni.py (Versione 28.0 - Enterprise Hybrid)
-# MERGE: Funzionalità v16.8 (Custom/Conflict UI) + v27.0 (HR Transfer)
+# file: server/pages/10_Pianificazione_Turni.py (Versione 30.0 - Definitiva)
+# Include: Custom Mode, HR Transfer, Conflict Resolution Policy
 
 from __future__ import annotations
 import os
@@ -22,7 +22,7 @@ st.set_page_config(page_title="Pianificazione Turni", page_icon="📅", layout="
 st.title("📅 Pianificazione Turni & Cicli")
 st.markdown("Gestione integrata: Pianificazione Ordinaria (Squadre/Custom) e Gestione HR (Trasferimenti/Cambi Ciclo).")
 
-# --- DIAGNOSTICA CACHE (Mantenuta dalla v16.8) ---
+# --- DIAGNOSTICA CACHE ---
 with st.sidebar:
     st.divider()
     if st.button("Pulisci Cache Dati", help="Forza il ricaricamento dei dati da DB"):
@@ -63,7 +63,7 @@ except Exception as e:
 tab_ord, tab_trans = st.tabs(["📆 Pianificazione Ordinaria", "✈️ Trasferimento & Cambio Ciclo"])
 
 # ==============================================================================
-# TAB 1: PIANIFICAZIONE ORDINARIA (Logica v16.8 Potenziata)
+# TAB 1: PIANIFICAZIONE ORDINARIA (Con Gestione Conflitti SAP)
 # ==============================================================================
 with tab_ord:
     st.subheader("Inserimento Turno (Squadra)")
@@ -71,7 +71,7 @@ with tab_ord:
     if not lista_turni or not lista_squadre:
         st.warning("Configurazione incompleta (mancano turni o squadre).")
     else:
-        # Selettore Modalità (FUORI dal form come da fix v16.8)
+        # Selettore Modalità
         tipo_inserimento = st.radio(
             "Modalità Inserimento",
             ["Standard (da Turni Predefiniti)", "Custom (Orario Manuale)"],
@@ -83,10 +83,7 @@ with tab_ord:
         with st.form("planning_form_ord"):
             c1, c2 = st.columns(2)
             
-            # Variabili default
-            dt_start_eff = None
-            dt_end_eff = None
-            
+            # Variabili default per Custom
             d_custom_start = date.today()
             t_custom_start = time(8, 0)
             d_custom_end = date.today()
@@ -108,7 +105,7 @@ with tab_ord:
                         t_custom_end = st.time_input("Ora Fine", time(13,0), key="t_ce")
 
             with c2:
-                # Caricamento Attività Intelligente
+                # Caricamento Attività
                 opts_att = {
                     "VIAGGIO": "VIAGGIO (Trasferta)",
                     "STRAORDINARIO": "STRAORDINARIO (Generico)",
@@ -125,6 +122,24 @@ with tab_ord:
                 s_sel_id = st.selectbox("Squadra", options=opts_sq.keys(), format_func=lambda x: opts_sq[x])
 
             note_ord = st.text_input("Note Pianificazione")
+            
+            # --- POLICY CONFLITTI (NOVITÀ V30.0) ---
+            st.markdown("---")
+            st.markdown("**⚠️ Gestione Conflitti (Se un operaio ha già un turno in questo orario):**")
+            conflict_mode = st.radio(
+                "Policy Conflitti",
+                ["🛑 Blocca tutto (Errore)", "⏭️ Salta chi è occupato", "✏️ Sovrascrivi (Forza Inserimento)"],
+                horizontal=True,
+                index=0,
+                key="conflict_mode_radio"
+            )
+            
+            # Mappatura per il Service Layer
+            policy_map = {
+                "🛑 Blocca tutto (Errore)": "error",
+                "⏭️ Salta chi è occupato": "skip",
+                "✏️ Sovrascrivi (Forza Inserimento)": "overwrite"
+            }
             
             if st.form_submit_button("🚀 Pianifica Turno", type="primary", use_container_width=True):
                 # 1. Calcolo Orari
@@ -148,18 +163,7 @@ with tab_ord:
                         st.error("Squadra vuota! Aggiungi membri in 'Gestione Squadre'.")
                         st.stop()
 
-                    # 3. Check Sovrapposizioni (UI Dettagliata v16.8)
-                    conflitti = []
-                    for m_id in membri:
-                        if shift_service.check_for_master_overlaps(m_id, dt_start_eff, dt_end_eff):
-                            conflitti.append(dipendenti_map.get(m_id, f"ID {m_id}"))
-                    
-                    if conflitti:
-                        st.error("⛔ Impossibile pianificare. I seguenti operai hanno sovrapposizioni:")
-                        st.markdown("\n".join([f"- **{name}**" for name in conflitti]))
-                        st.stop()
-
-                    # 4. Salvataggio
+                    # 3. Preparazione Batch
                     att_db = a_sel_id if a_sel_id != "-1" else None
                     batch = [{
                         "id_dipendente": m,
@@ -169,45 +173,57 @@ with tab_ord:
                         "note": note_ord
                     } for m in membri]
                     
-                    count = shift_service.create_shifts_batch(batch)
-                    st.success(f"✅ Pianificato con successo per {count} operai.")
-                    st.cache_data.clear()
-
-                    # 5. Riepilogo (UI v16.8)
-                    with st.container(border=True):
-                        rc1, rc2 = st.columns(2)
-                        with rc1:
-                            st.write(f"**Squadra:** {opts_sq[s_sel_id]}")
-                            st.write(f"**Inizio:** {dt_start_eff.strftime('%d/%m %H:%M')}")
-                        with rc2:
-                            st.write(f"**Attività:** {opts_att.get(a_sel_id)}")
-                            st.write(f"**Fine:** {dt_end_eff.strftime('%d/%m %H:%M')}")
+                    # 4. Chiamata al Service con Policy
+                    policy_code = policy_map[conflict_mode]
+                    results = shift_service.create_shifts_batch(batch, conflict_policy=policy_code)
+                    
+                    # 5. Analisi Risultati
+                    msg = f"✅ Operazione conclusa.\n- **Creati:** {results['created']} segmenti."
+                    
+                    if results['skipped']:
+                        msg += f"\n- **Saltati (Già Occupati):** {len(results['skipped'])} operai (Policy: Skip)."
+                    
+                    if results['overwritten']:
+                        msg += f"\n- **Sovrascritti (Turni Cancellati):** {len(results['overwritten'])} operai (Policy: Overwrite)."
+                    
+                    # Feedback visuale
+                    if results['created'] > 0 or results['overwritten']:
+                        st.success(msg)
+                        st.cache_data.clear()
+                        
+                        # Riepilogo visivo
+                        with st.container(border=True):
+                            rc1, rc2 = st.columns(2)
+                            with rc1:
+                                st.write(f"**Squadra:** {opts_sq[s_sel_id]}")
+                                st.write(f"**Inizio:** {dt_start_eff.strftime('%d/%m %H:%M')}")
+                            with rc2:
+                                st.write(f"**Attività:** {opts_att.get(a_sel_id)}")
+                                st.write(f"**Fine:** {dt_end_eff.strftime('%d/%m %H:%M')}")
+                    else:
+                        st.warning(msg + "\nNessun turno è stato inserito.")
 
                 except Exception as e:
                     st.error(f"Errore: {e}")
 
 # ==============================================================================
-# TAB 2: TRASFERIMENTO & CAMBIO CICLO (Logica v27.0 Enterprise)
+# TAB 2: TRASFERIMENTO & CAMBIO CICLO (HR Transfer)
 # ==============================================================================
 with tab_trans:
     st.subheader("Gestione HR: Trasferimento & Transizione")
     st.markdown("""
     Questa procedura esegue un **Cambio Squadra Strutturale** gestendo i turni di raccordo.
-    1. **Pulisce** i turni del dipendente nel giorno del cambio.
-    2. **Inserisce** i turni di transizione (es. 6+4 ore) per garantire il riposo.
-    3. **Sposta** il dipendente nella nuova squadra database.
+    Il sistema applicherà una **Smart Delete**: cancellerà solo i turni futuri, preservando lo storico.
     """)
     
     with st.container(border=True):
         col_pers, col_dest = st.columns(2)
         
         with col_pers:
-            # Lista dipendenti con ruolo
             dip_opts = {row.name: f"{row['cognome']} {row['nome']} ({row['ruolo']})" for _, row in df_dipendenti.iterrows()}
             target_dip_id = st.selectbox("Seleziona Operaio da Trasferire", options=list(dip_opts.keys()), format_func=lambda x: dip_opts[x])
             
         with col_dest:
-            # Squadra destinazione
             opts_sq_trans = {s['id_squadra']: s['nome_squadra'] for s in lista_squadre}
             target_team_id = st.selectbox("Nuova Squadra di Destinazione", options=opts_sq_trans.keys(), format_func=lambda x: opts_sq_trans[x])
         
@@ -224,6 +240,7 @@ with tab_trans:
             **Protocollo G>N (10h Totali):**
             1. **08:00 - 14:00** (6h): Chiusura turno diurno.
             2. **20:00 - 06:00** (4h su oggi): Inizio ciclo notturno.
+            *HR: L'operaio viene spostato nella Squadra Notte.*
             """)
             code = 'DAY_TO_NIGHT'
         else:
@@ -231,17 +248,17 @@ with tab_trans:
             **Protocollo N>G (10h Totali):**
             1. **20:00 - 02:00** (6h): Notte Corta (anticipa riposo).
             2. **08:00 - 18:00** (Domani): Primo turno diurno standard.
+            *HR: L'operaio viene spostato nella Squadra Giorno.*
             """)
             code = 'NIGHT_TO_DAY'
 
         if st.button("🔄 Esegui Trasferimento e Cambio Ciclo", type="primary", use_container_width=True):
             try:
-                # Eseguiamo il metodo Enterprise del service layer
                 shift_service.execute_team_transfer(target_dip_id, target_team_id, code, d_change)
                 
                 st.success(f"✅ Trasferimento completato: {dip_opts[target_dip_id]} è ora nella squadra {opts_sq_trans[target_team_id]}.")
-                st.info("I turni di raccordo sono stati generati e i turni vecchi sovrascritti.")
-                st.cache_data.clear() # Fondamentale per aggiornare le squadre
+                st.info("I turni di raccordo sono stati generati e i turni futuri sono stati riallineati.")
+                st.cache_data.clear() 
                 
             except Exception as e:
                 st.error(f"Errore durante il trasferimento: {e}")

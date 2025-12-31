@@ -1,4 +1,4 @@
-# core/shift_service.py (Versione 28.1 - Fix Interruzioni & Smart Delete)
+# core/shift_service.py (Versione 30.0 - Conflict Policy Manager)
 from __future__ import annotations
 import datetime
 from typing import List, Dict, Any, Optional
@@ -11,7 +11,7 @@ class ShiftService:
     def __init__(self, db_manager: CrmDBManager):
         self.db_manager = db_manager
 
-    # --- 1. CORE LOGIC ---
+    # --- CORE LOGIC ---
     def _split_and_prepare_segments(self, id_turno_master: int, shift_data: Dict[str, Any]) -> List[tuple]:
         start = shift_data['data_ora_inizio']
         end = shift_data['data_ora_fine']
@@ -34,68 +34,46 @@ class ShiftService:
             create_segment_tuple(mezzanotte, end, f"{note} (Parte 2)".strip())
         ]
 
-    def create_shifts_batch(self, shifts_data: List[Dict[str, Any]]) -> int:
-        if not shifts_data: return 0
-        total_segments_created = 0
+    # --- BATCH CREATION CON POLICY ---
+    def create_shifts_batch(self, shifts_data: List[Dict[str, Any]], conflict_policy: str = 'error') -> Dict[str, Any]:
+        """
+        Create batch con gestione conflitti: 'error', 'skip', 'overwrite'.
+        """
+        if not shifts_data: return {'created': 0, 'skipped': [], 'overwritten': []}
+        
+        results = {'created': 0, 'skipped': [], 'overwritten': []}
+        
         with self.db_manager.transaction() as cursor:
             for shift in shifts_data:
-                id_dipendente = shift['id_dipendente']
-                start_time = shift['data_ora_inizio']
-                end_time = shift['data_ora_fine']
+                id_dip = shift['id_dipendente']
+                start = shift['data_ora_inizio']
+                end = shift['data_ora_fine']
 
-                if self.db_manager.check_for_master_overlaps(id_dipendente, start_time, end_time):
-                    raise ValueError(f"CONFLITTO: Dipendente {id_dipendente} occupato in {start_time}-{end_time}")
+                # Verifica conflitto
+                if self.db_manager.check_for_master_overlaps(id_dip, start, end):
+                    if conflict_policy == 'error':
+                        raise ValueError(f"CONFLITTO: Dipendente {id_dip} occupato in {start}-{end}")
+                    
+                    elif conflict_policy == 'skip':
+                        results['skipped'].append(str(id_dip))
+                        continue 
+                    
+                    elif conflict_policy == 'overwrite':
+                        # Recupera e cancella i turni in conflitto
+                        conflicting = self.db_manager.get_overlapping_master_ids(id_dip, start, end)
+                        for cid in conflicting:
+                            self.db_manager.delete_turno_master(cursor, cid)
+                        results['overwritten'].append(str(id_dip))
+                        # Procedi all'inserimento
 
                 master_id = self.db_manager.create_turno_master(cursor, shift)
                 segments = self._split_and_prepare_segments(master_id, shift)
                 self.db_manager.create_registrazioni_segments(cursor, segments)
-                total_segments_created += len(segments)
-        return total_segments_created
+                results['created'] += len(segments)
+                
+        return results
 
-    # --- 2. MODIFICHE E INTERRUZIONI ---
-    def update_master_shift(self, id_turno_master: int, new_start: datetime.datetime, new_end: datetime.datetime, new_id_attivita: Optional[str], new_note: Optional[str]):
-        with self.db_manager.transaction() as cursor:
-            master_originale = self.db_manager.get_turno_master(cursor, id_turno_master)
-            if not master_originale: raise ValueError(f"Turno master {id_turno_master} non trovato.")
-
-            if self.db_manager.check_for_master_overlaps(master_originale['id_dipendente'], new_start, new_end, exclude_master_id=id_turno_master):
-                raise ValueError("La modifica causa una sovrapposizione.")
-
-            self.db_manager.update_turno_master(cursor, id_turno_master, new_start, new_end, new_id_attivita, new_note)
-            
-            new_data = {'id_dipendente': master_originale['id_dipendente'], 'data_ora_inizio': new_start, 'data_ora_fine': new_end, 'id_attivita': new_id_attivita, 'note': new_note}
-            new_segs = self._split_and_prepare_segments(id_turno_master, new_data)
-            self.db_manager.create_registrazioni_segments(cursor, new_segs)
-
-    def delete_master_shift(self, id_turno_master: int):
-        with self.db_manager.transaction() as cursor: self.db_manager.delete_turno_master(cursor, id_turno_master)
-
-    def split_master_shift_for_interruption(self, id_turno_master: int, start_interruzione: datetime.datetime, end_interruzione: datetime.datetime):
-        with self.db_manager.transaction() as cursor:
-            master_originale = self.db_manager.get_turno_master(cursor, id_turno_master)
-            if not master_originale: raise ValueError("Turno non trovato.")
-
-            original_start = datetime.datetime.fromisoformat(master_originale['data_ora_inizio_effettiva'])
-            original_end = datetime.datetime.fromisoformat(master_originale['data_ora_fine_effettiva'])
-            
-            if start_interruzione >= end_interruzione or start_interruzione < original_start or end_interruzione > original_end:
-                raise ValueError("Interruzione non valida")
-
-            self.db_manager.delete_turno_master(cursor, id_turno_master)
-            
-            to_create = []
-            if original_start < start_interruzione:
-                to_create.append({"id_dipendente": master_originale['id_dipendente'], "id_attivita": master_originale['id_attivita'], "data_ora_inizio": original_start, "data_ora_fine": start_interruzione, "note": f"{master_originale.get('note') or ''} (Ante)".strip()})
-            if end_interruzione < original_end:
-                to_create.append({"id_dipendente": master_originale['id_dipendente'], "id_attivita": master_originale['id_attivita'], "data_ora_inizio": end_interruzione, "data_ora_fine": original_end, "note": f"{master_originale.get('note') or ''} (Post)".strip()})
-            
-            if to_create:
-                for s in to_create:
-                    mid = self.db_manager.create_turno_master(cursor, s)
-                    segs = self._split_and_prepare_segments(mid, s)
-                    self.db_manager.create_registrazioni_segments(cursor, segs)
-
-    # --- 3. LOGICA ENTERPRISE ---
+    # --- TRANSITION & HR ---
     def _generate_transition_shifts(self, id_dip: int, protocol_type: str, date_change: datetime.date, note: str) -> List[Dict]:
         shifts = []
         if protocol_type == 'DAY_TO_NIGHT': 
@@ -117,32 +95,46 @@ class ShiftService:
         return shifts
 
     def execute_team_transfer(self, id_dipendente: int, id_target_team: int, protocol_type: str, date_change: datetime.date):
-        # 1. SMART DELETE: Cancella SOLO i turni che iniziano DAL giorno del cambio in poi
+        # 1. SMART DELETE: Cancella solo se inizia DAL giorno del cambio in poi (non tocca la notte prima)
         days_to_check = [date_change, date_change + datetime.timedelta(days=1)]
-        
         for day in days_to_check:
             ids = self.db_manager.get_turni_by_dipendente_date(id_dipendente, day)
             for old_id in ids:
-                # Recupera dettagli per verificare la data di inizio
-                shift_details = self.db_manager.get_turno_master_details(old_id)
-                if shift_details:
-                    start_dt = datetime.datetime.fromisoformat(shift_details['data_ora_inizio_effettiva'])
-                    
-                    # REGOLA D'ORO: Se il turno è iniziato IERI (es. 30 Gen), NON TOCCARLO.
-                    # Tocca solo se inizia OGGI (31 Gen) o dopo.
-                    if start_dt.date() < date_change:
-                        continue 
-                    
+                details = self.db_manager.get_turno_master_details(old_id)
+                if details:
+                    start = datetime.datetime.fromisoformat(details['data_ora_inizio_effettiva'])
+                    if start.date() < date_change: continue
                     self.delete_master_shift(old_id)
 
-        # 2. Inserimento Raccordo
+        # 2. INSERT (Forza overwrite per sicurezza)
         shifts = self._generate_transition_shifts(id_dipendente, protocol_type, date_change, "[TRANSFER]")
-        self.create_shifts_batch(shifts)
+        self.create_shifts_batch(shifts, conflict_policy='overwrite')
 
-        # 3. HR Transfer
+        # 3. TRANSFER
         self.db_manager.transfer_dipendente_to_squadra(id_dipendente, id_target_team)
 
-    # --- 4. READ METHODS ---
+    # --- STANDARD METHODS ---
+    def update_master_shift(self, id_m, s, e, act, n):
+        with self.db_manager.transaction() as cur:
+            orig = self.db_manager.get_turno_master(cur, id_m)
+            self.db_manager.update_turno_master(cur, id_m, s, e, act, n)
+            segs = self._split_and_prepare_segments(id_m, {'id_dipendente': orig['id_dipendente'], 'data_ora_inizio': s, 'data_ora_fine': e, 'id_attivita': act, 'note': n})
+            self.db_manager.create_registrazioni_segments(cur, segs)
+    def delete_master_shift(self, id_m):
+        with self.db_manager.transaction() as cur: self.db_manager.delete_turno_master(cur, id_m)
+    def split_master_shift_for_interruption(self, id_m, s, e):
+        with self.db_manager.transaction() as cur:
+            orig = self.db_manager.get_turno_master(cur, id_m)
+            self.db_manager.delete_turno_master(cur, id_m)
+            s_orig = datetime.datetime.fromisoformat(orig['data_ora_inizio_effettiva'])
+            e_orig = datetime.datetime.fromisoformat(orig['data_ora_fine_effettiva'])
+            if s_orig < s:
+                mid = self.db_manager.create_turno_master(cur, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':s_orig, 'data_ora_fine':s, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Ante)"})
+                self.db_manager.create_registrazioni_segments(cur, self._split_and_prepare_segments(mid, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':s_orig, 'data_ora_fine':s, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Ante)"}))
+            if e < e_orig:
+                mid = self.db_manager.create_turno_master(cur, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':e, 'data_ora_fine':e_orig, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Post)"})
+                self.db_manager.create_registrazioni_segments(cur, self._split_and_prepare_segments(mid, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':e, 'data_ora_fine':e_orig, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Post)"}))
+
     def get_turni_standard(self): return self.db_manager.get_turni_standard()
     def get_squadre(self): return self.db_manager.get_squadre()
     def get_dipendenti_df(self, solo_attivi=False): return self.db_manager.get_dipendenti_df(solo_attivi)
