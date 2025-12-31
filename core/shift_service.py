@@ -1,4 +1,4 @@
-# core/shift_service.py (Versione 30.0 - Conflict Policy Manager)
+# core/shift_service.py (Versione 30.1 - Atomic Conflict Resolution)
 from __future__ import annotations
 import datetime
 from typing import List, Dict, Any, Optional
@@ -34,10 +34,11 @@ class ShiftService:
             create_segment_tuple(mezzanotte, end, f"{note} (Parte 2)".strip())
         ]
 
-    # --- BATCH CREATION CON POLICY ---
+    # --- BATCH CON POLICY ATOMICA ---
     def create_shifts_batch(self, shifts_data: List[Dict[str, Any]], conflict_policy: str = 'error') -> Dict[str, Any]:
         """
-        Create batch con gestione conflitti: 'error', 'skip', 'overwrite'.
+        Crea batch di turni.
+        conflict_policy: 'error' (Default), 'skip', 'overwrite'.
         """
         if not shifts_data: return {'created': 0, 'skipped': [], 'overwritten': []}
         
@@ -59,12 +60,11 @@ class ShiftService:
                         continue 
                     
                     elif conflict_policy == 'overwrite':
-                        # Recupera e cancella i turni in conflitto
-                        conflicting = self.db_manager.get_overlapping_master_ids(id_dip, start, end)
-                        for cid in conflicting:
-                            self.db_manager.delete_turno_master(cursor, cid)
-                        results['overwritten'].append(str(id_dip))
-                        # Procedi all'inserimento
+                        # ★★★ USO METODO ATOMICO SUL CURSORE ★★★
+                        deleted_count = self.db_manager.delete_overlaps_on_cursor(cursor, id_dip, start, end)
+                        if deleted_count > 0:
+                            results['overwritten'].append(str(id_dip))
+                        # Ora lo spazio è libero, procedi all'inserimento
 
                 master_id = self.db_manager.create_turno_master(cursor, shift)
                 segments = self._split_and_prepare_segments(master_id, shift)
@@ -95,7 +95,7 @@ class ShiftService:
         return shifts
 
     def execute_team_transfer(self, id_dipendente: int, id_target_team: int, protocol_type: str, date_change: datetime.date):
-        # 1. SMART DELETE: Cancella solo se inizia DAL giorno del cambio in poi (non tocca la notte prima)
+        # 1. SMART DELETE
         days_to_check = [date_change, date_change + datetime.timedelta(days=1)]
         for day in days_to_check:
             ids = self.db_manager.get_turni_by_dipendente_date(id_dipendente, day)
@@ -106,7 +106,7 @@ class ShiftService:
                     if start.date() < date_change: continue
                     self.delete_master_shift(old_id)
 
-        # 2. INSERT (Forza overwrite per sicurezza)
+        # 2. INSERT
         shifts = self._generate_transition_shifts(id_dipendente, protocol_type, date_change, "[TRANSFER]")
         self.create_shifts_batch(shifts, conflict_policy='overwrite')
 

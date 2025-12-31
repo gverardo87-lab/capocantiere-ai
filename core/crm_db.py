@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 29.0 - Fix Calendario Scientifico)
+# file: core/crm_db.py (Versione 30.1 - Atomic Overwrite)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -26,7 +26,7 @@ class CrmDBManager:
     def _init_schema(self):
         with self._connect() as conn:
             cursor = conn.cursor()
-            # ... (Schema invariato, lo mantengo compatto per leggibilità) ...
+            # ... (Schema tabelle standard) ...
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS anagrafica_dipendenti (
                 id_dipendente INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +132,8 @@ class CrmDBManager:
                 cursor.execute("BEGIN TRANSACTION")
                 cursor.execute("DELETE FROM membri_squadra WHERE id_squadra = ?", (id_squadra,))
                 if membri_ids:
-                    cursor.executemany("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", [(id_squadra, mid) for mid in list(set(membri_ids))])
+                    unique = list(set(membri_ids))
+                    cursor.executemany("INSERT INTO membri_squadra (id_squadra, id_dipendente) VALUES (?, ?)", [(id_squadra, mid) for mid in unique])
                 conn.commit()
             except Exception as e:
                 conn.rollback(); raise e
@@ -157,6 +158,7 @@ class CrmDBManager:
         with self._connect() as conn:
             conn.execute("DELETE FROM squadre WHERE id_squadra = ?", (id_squadra,)); conn.commit()
 
+    # --- TURNI CORE ---
     def create_turno_master(self, cursor: sqlite3.Cursor, shift_data: Dict[str, Any]) -> int:
         query = "INSERT INTO turni_master (id_dipendente, data_ora_inizio_effettiva, data_ora_fine_effettiva, id_attivita, note) VALUES (?, ?, ?, ?, ?)"
         params = (shift_data['id_dipendente'], shift_data['data_ora_inizio'].isoformat(), shift_data['data_ora_fine'].isoformat(), shift_data.get('id_attivita'), shift_data.get('note'))
@@ -175,12 +177,28 @@ class CrmDBManager:
     def delete_turno_master(self, cursor: sqlite3.Cursor, id_turno_master: int):
         cursor.execute("DELETE FROM turni_master WHERE id_turno_master = ?", (id_turno_master,))
 
+    # --- ★★★ NUOVO METODO ATOMICO PER OVERWRITE ★★★ ---
+    def delete_overlaps_on_cursor(self, cursor: sqlite3.Cursor, id_dipendente: int, start_time: datetime.datetime, end_time: datetime.datetime) -> int:
+        """
+        Cancella i turni sovrapposti usando il cursore attivo della transazione.
+        Fondamentale per il 'Conflict Policy: Overwrite'.
+        """
+        query = """
+        DELETE FROM turni_master 
+        WHERE id_dipendente = ? 
+          AND data_ora_inizio_effettiva < ? 
+          AND data_ora_fine_effettiva > ?
+        """
+        params = (id_dipendente, end_time.isoformat(), start_time.isoformat())
+        cursor.execute(query, params)
+        return cursor.rowcount # Ritorna quanti ne ha cancellati
+
     def insert_turno_standard(self, id_turno: str, nome: str, inizio: str, fine: str, scavalca: bool):
          with self._connect() as conn:
             conn.execute("INSERT OR REPLACE INTO turni_standard (id_turno, nome_turno, ora_inizio, ora_fine, scavalca_mezzanotte) VALUES (?, ?, ?, ?, ?)", (id_turno, nome, inizio, fine, scavalca))
             conn.commit()
 
-    # --- METODI LETTURA ---
+    # --- LETTURA ---
     def get_dipendenti_df(self, solo_attivi: bool = False) -> pd.DataFrame:
         q = "SELECT id_dipendente, nome, cognome, ruolo, attivo FROM anagrafica_dipendenti"
         if solo_attivi: q += " WHERE attivo = 1"
@@ -236,42 +254,25 @@ class CrmDBManager:
             df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva'])[0], axis=1)
         return df.set_index('id_turno_master')
 
-    # --- ★★★ FIX SCIENTIFICO PER CALENDARIO ★★★ ---
     def get_turni_master_range_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        """
-        [FIX 29.0] Recupera i turni per il calendario leggendo DIRETTAMENTE dai segmenti (registrazioni_ore).
-        In questo modo, se un turno scavalca la mezzanotte, il calendario vedrà DUE segmenti distinti
-        assegnati ai rispettivi giorni, garantendo che la somma delle ore per giorno sia esatta (es. 10h totali).
-        """
+        # Legge dalle REGISTRAZIONI per correttezza calendario
         start_str = start_date.isoformat()
         end_str = end_date.isoformat()
-        
-        # Query che preleva i SEGMENTI reali (già splittati)
-        # Rinominiamo le colonne per far credere al frontend che siano turni_master normali
-        query = """
+        q = """
         SELECT 
-            r.id_turno_master, -- Manteniamo ID master per riferimento
-            a.cognome, 
-            a.nome, 
-            r.data_ora_inizio AS data_ora_inizio_effettiva, -- Orario del segmento, non del master
+            r.id_turno_master, a.cognome, a.nome, 
+            r.data_ora_inizio AS data_ora_inizio_effettiva, 
             r.data_ora_fine AS data_ora_fine_effettiva,
-            r.id_attivita, 
-            r.note, 
-            a.ruolo, 
-            r.id_dipendente,
+            r.id_attivita, r.note, a.ruolo, r.id_dipendente,
             a.cognome || ' ' || a.nome AS dipendente_nome,
-            r.ore_presenza AS durata_ore -- Prendiamo l'ora GIA' calcolata e salvata
+            r.ore_presenza AS durata_ore 
         FROM registrazioni_ore r
         JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente
         WHERE date(r.data_ora_inizio) BETWEEN ? AND ?
         ORDER BY a.cognome, r.data_ora_inizio
         """
-        
         with self._connect() as conn:
-            df = pd.read_sql_query(query, conn, params=(start_str, end_str), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
-        
-        # Non serve ricalcolare durata_ore perché la prendiamo direttamente dal DB (ore_presenza)
-        return df
+            return pd.read_sql_query(q, conn, params=(start_str, end_str), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
 
     def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
         q = "SELECT r.id_registrazione, r.data_ora_inizio, r.data_ora_fine, r.id_attivita, r.ore_presenza, r.ore_lavoro, r.tipo_ore, a.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome, a.ruolo, r.id_turno_master FROM registrazioni_ore r JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente WHERE date(r.data_ora_inizio) BETWEEN ? AND ? AND a.attivo = 1 AND r.data_ora_inizio IS NOT NULL AND r.data_ora_fine IS NOT NULL"
