@@ -1,4 +1,4 @@
-# core/shift_service.py (Versione 30.1 - Atomic Conflict Resolution)
+# core/shift_service.py (Versione 31.0 - Storicizzazione Squadra)
 from __future__ import annotations
 import datetime
 from typing import List, Dict, Any, Optional
@@ -34,11 +34,10 @@ class ShiftService:
             create_segment_tuple(mezzanotte, end, f"{note} (Parte 2)".strip())
         ]
 
-    # --- BATCH CON POLICY ATOMICA ---
+    # --- BATCH CON POLICY E STORICIZZAZIONE ---
     def create_shifts_batch(self, shifts_data: List[Dict[str, Any]], conflict_policy: str = 'error') -> Dict[str, Any]:
         """
-        Crea batch di turni.
-        conflict_policy: 'error' (Default), 'skip', 'overwrite'.
+        Crea batch di turni salvando anche l'ID SQUADRA.
         """
         if not shifts_data: return {'created': 0, 'skipped': [], 'overwritten': []}
         
@@ -60,37 +59,41 @@ class ShiftService:
                         continue 
                     
                     elif conflict_policy == 'overwrite':
-                        # ★★★ USO METODO ATOMICO SUL CURSORE ★★★
-                        deleted_count = self.db_manager.delete_overlaps_on_cursor(cursor, id_dip, start, end)
-                        if deleted_count > 0:
-                            results['overwritten'].append(str(id_dip))
-                        # Ora lo spazio è libero, procedi all'inserimento
+                        self.db_manager.delete_overlaps_on_cursor(cursor, id_dip, start, end)
+                        results['overwritten'].append(str(id_dip))
 
+                # CREAZIONE MASTER (Ora supporta id_squadra nel DAO)
                 master_id = self.db_manager.create_turno_master(cursor, shift)
+                
+                # CREAZIONE SEGMENTI
                 segments = self._split_and_prepare_segments(master_id, shift)
                 self.db_manager.create_registrazioni_segments(cursor, segments)
                 results['created'] += len(segments)
                 
         return results
 
-    # --- TRANSITION & HR ---
-    def _generate_transition_shifts(self, id_dip: int, protocol_type: str, date_change: datetime.date, note: str) -> List[Dict]:
+    # --- TRANSITION & HR (Con Squadra Target) ---
+    def _generate_transition_shifts(self, id_dip: int, id_sq: int, protocol_type: str, date_change: datetime.date, note: str) -> List[Dict]:
+        """Genera i turni di transizione associandoli alla NUOVA squadra (o quella di transizione)."""
         shifts = []
         if protocol_type == 'DAY_TO_NIGHT': 
             dt1_s = datetime.datetime.combine(date_change, datetime.time(8, 0))
             dt1_e = datetime.datetime.combine(date_change, datetime.time(14, 0))
             dt2_s = datetime.datetime.combine(date_change, datetime.time(20, 0))
             dt2_e = datetime.datetime.combine(date_change + datetime.timedelta(days=1), datetime.time(6, 0))
-            shifts.append({"id_dipendente": id_dip, "data_ora_inizio": dt1_s, "data_ora_fine": dt1_e, "id_attivita": "-1", "note": f"G>N (Mattina) {note}"})
-            shifts.append({"id_dipendente": id_dip, "data_ora_inizio": dt2_s, "data_ora_fine": dt2_e, "id_attivita": "-1", "note": f"G>N (Notte) {note}"})
+            
+            # Nota: id_squadra viene passato qui
+            shifts.append({"id_dipendente": id_dip, "id_squadra": id_sq, "data_ora_inizio": dt1_s, "data_ora_fine": dt1_e, "id_attivita": "-1", "note": f"G>N (Mattina) {note}"})
+            shifts.append({"id_dipendente": id_dip, "id_squadra": id_sq, "data_ora_inizio": dt2_s, "data_ora_fine": dt2_e, "id_attivita": "-1", "note": f"G>N (Notte) {note}"})
 
         elif protocol_type == 'NIGHT_TO_DAY': 
             dt_s = datetime.datetime.combine(date_change, datetime.time(20, 0))
             dt_e = datetime.datetime.combine(date_change + datetime.timedelta(days=1), datetime.time(2, 0))
             dt_day_s = datetime.datetime.combine(date_change + datetime.timedelta(days=1), datetime.time(8, 0))
             dt_day_e = datetime.datetime.combine(date_change + datetime.timedelta(days=1), datetime.time(18, 0))
-            shifts.append({"id_dipendente": id_dip, "data_ora_inizio": dt_s, "data_ora_fine": dt_e, "id_attivita": "-1", "note": f"N>G (Notte Corta) {note}"})
-            shifts.append({"id_dipendente": id_dip, "data_ora_inizio": dt_day_s, "data_ora_fine": dt_day_e, "id_attivita": "-1", "note": f"N>G (Start Giorno) {note}"})
+            
+            shifts.append({"id_dipendente": id_dip, "id_squadra": id_sq, "data_ora_inizio": dt_s, "data_ora_fine": dt_e, "id_attivita": "-1", "note": f"N>G (Notte Corta) {note}"})
+            shifts.append({"id_dipendente": id_dip, "id_squadra": id_sq, "data_ora_inizio": dt_day_s, "data_ora_fine": dt_day_e, "id_attivita": "-1", "note": f"N>G (Start Giorno) {note}"})
             
         return shifts
 
@@ -106,14 +109,14 @@ class ShiftService:
                     if start.date() < date_change: continue
                     self.delete_master_shift(old_id)
 
-        # 2. INSERT
-        shifts = self._generate_transition_shifts(id_dipendente, protocol_type, date_change, "[TRANSFER]")
+        # 2. INSERT (Passiamo ID Squadra Target)
+        shifts = self._generate_transition_shifts(id_dipendente, id_target_team, protocol_type, date_change, "[TRANSFER]")
         self.create_shifts_batch(shifts, conflict_policy='overwrite')
 
         # 3. TRANSFER
         self.db_manager.transfer_dipendente_to_squadra(id_dipendente, id_target_team)
 
-    # --- STANDARD METHODS ---
+    # --- STANDARD METHODS (Invariati) ---
     def update_master_shift(self, id_m, s, e, act, n):
         with self.db_manager.transaction() as cur:
             orig = self.db_manager.get_turno_master(cur, id_m)
@@ -128,11 +131,13 @@ class ShiftService:
             self.db_manager.delete_turno_master(cur, id_m)
             s_orig = datetime.datetime.fromisoformat(orig['data_ora_inizio_effettiva'])
             e_orig = datetime.datetime.fromisoformat(orig['data_ora_fine_effettiva'])
+            sq = orig.get('id_squadra') # Preserva squadra esistente
+            
             if s_orig < s:
-                mid = self.db_manager.create_turno_master(cur, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':s_orig, 'data_ora_fine':s, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Ante)"})
+                mid = self.db_manager.create_turno_master(cur, {'id_dipendente':orig['id_dipendente'], 'id_squadra':sq, 'data_ora_inizio':s_orig, 'data_ora_fine':s, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Ante)"})
                 self.db_manager.create_registrazioni_segments(cur, self._split_and_prepare_segments(mid, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':s_orig, 'data_ora_fine':s, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Ante)"}))
             if e < e_orig:
-                mid = self.db_manager.create_turno_master(cur, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':e, 'data_ora_fine':e_orig, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Post)"})
+                mid = self.db_manager.create_turno_master(cur, {'id_dipendente':orig['id_dipendente'], 'id_squadra':sq, 'data_ora_inizio':e, 'data_ora_fine':e_orig, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Post)"})
                 self.db_manager.create_registrazioni_segments(cur, self._split_and_prepare_segments(mid, {'id_dipendente':orig['id_dipendente'], 'data_ora_inizio':e, 'data_ora_fine':e_orig, 'id_attivita':orig['id_attivita'], 'note':f"{orig.get('note')} (Post)"}))
 
     def get_turni_standard(self): return self.db_manager.get_turni_standard()

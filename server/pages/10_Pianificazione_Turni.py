@@ -1,5 +1,5 @@
-# file: server/pages/10_Pianificazione_Turni.py (Versione 30.0 - Definitiva)
-# Include: Custom Mode, HR Transfer, Conflict Resolution Policy
+# file: server/pages/10_Pianificazione_Turni.py (Versione 31.0 - Storicizzazione UI)
+# Include: Custom Mode, HR Transfer, Conflict Policy, Team History
 
 from __future__ import annotations
 import os
@@ -63,7 +63,7 @@ except Exception as e:
 tab_ord, tab_trans = st.tabs(["📆 Pianificazione Ordinaria", "✈️ Trasferimento & Cambio Ciclo"])
 
 # ==============================================================================
-# TAB 1: PIANIFICAZIONE ORDINARIA (Con Gestione Conflitti SAP)
+# TAB 1: PIANIFICAZIONE ORDINARIA (Con Storicizzazione Squadra)
 # ==============================================================================
 with tab_ord:
     st.subheader("Inserimento Turno (Squadra)")
@@ -123,7 +123,7 @@ with tab_ord:
 
             note_ord = st.text_input("Note Pianificazione")
             
-            # --- POLICY CONFLITTI (NOVITÀ V30.0) ---
+            # --- POLICY CONFLITTI ---
             st.markdown("---")
             st.markdown("**⚠️ Gestione Conflitti (Se un operaio ha già un turno in questo orario):**")
             conflict_mode = st.radio(
@@ -163,10 +163,11 @@ with tab_ord:
                         st.error("Squadra vuota! Aggiungi membri in 'Gestione Squadre'.")
                         st.stop()
 
-                    # 3. Preparazione Batch
+                    # 3. Preparazione Batch CON ID SQUADRA (Storicizzazione)
                     att_db = a_sel_id if a_sel_id != "-1" else None
                     batch = [{
                         "id_dipendente": m,
+                        "id_squadra": s_sel_id, # <--- FONDAMENTALE: Storicizza la squadra del turno
                         "id_attivita": att_db,
                         "data_ora_inizio": dt_start_eff,
                         "data_ora_fine": dt_end_eff,

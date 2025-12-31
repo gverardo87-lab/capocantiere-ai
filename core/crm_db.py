@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 30.1 - Atomic Overwrite)
+# file: core/crm_db.py (Versione 31.0 - Storicizzazione Squadra)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -16,6 +16,7 @@ class CrmDBManager:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(exist_ok=True)
         self._init_schema()
+        self._check_and_migrate() # <--- AUTO MIGRATION (Fondamentale)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -26,7 +27,8 @@ class CrmDBManager:
     def _init_schema(self):
         with self._connect() as conn:
             cursor = conn.cursor()
-            # ... (Schema tabelle standard) ...
+            
+            # --- ANAGRAFICA & SQUADRE ---
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS anagrafica_dipendenti (
                 id_dipendente INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,16 +60,21 @@ class CrmDBManager:
                 ora_fine TIME NOT NULL,
                 scavalca_mezzanotte BOOLEAN NOT NULL
             )""")
+            
+            # --- TURNI MASTER CON ID_SQUADRA (Per Storicizzazione) ---
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS turni_master (
                 id_turno_master INTEGER PRIMARY KEY AUTOINCREMENT,
                 id_dipendente INTEGER NOT NULL,
+                id_squadra INTEGER,  -- <--- NUOVA COLONNA STORICA
                 data_ora_inizio_effettiva DATETIME NOT NULL,
                 data_ora_fine_effettiva DATETIME NOT NULL,
                 note TEXT,
                 id_attivita TEXT,
-                FOREIGN KEY (id_dipendente) REFERENCES anagrafica_dipendenti (id_dipendente)
+                FOREIGN KEY (id_dipendente) REFERENCES anagrafica_dipendenti (id_dipendente),
+                FOREIGN KEY (id_squadra) REFERENCES squadre (id_squadra)
             )""")
+            
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS registrazioni_ore (
                 id_registrazione INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,6 +91,21 @@ class CrmDBManager:
                 FOREIGN KEY (id_turno_master) REFERENCES turni_master (id_turno_master) ON DELETE CASCADE
             )""")
             conn.commit()
+
+    def _check_and_migrate(self):
+        """Controlla se manca la colonna id_squadra in turni_master e la aggiunge."""
+        with self._connect() as conn:
+            try:
+                # Prova a selezionare la colonna
+                conn.execute("SELECT id_squadra FROM turni_master LIMIT 1")
+            except sqlite3.OperationalError:
+                print("⚠️ Migrazione DB: Aggiunta colonna 'id_squadra' a 'turni_master'...")
+                try:
+                    conn.execute("ALTER TABLE turni_master ADD COLUMN id_squadra INTEGER REFERENCES squadre(id_squadra)")
+                    conn.commit()
+                    print("✅ Migrazione completata.")
+                except Exception as e:
+                    print(f"❌ Errore durante migrazione: {e}")
 
     @contextmanager
     def transaction(self):
@@ -158,10 +180,22 @@ class CrmDBManager:
         with self._connect() as conn:
             conn.execute("DELETE FROM squadre WHERE id_squadra = ?", (id_squadra,)); conn.commit()
 
-    # --- TURNI CORE ---
+    # --- TURNI CORE (AGGIORNATO CON ID_SQUADRA) ---
     def create_turno_master(self, cursor: sqlite3.Cursor, shift_data: Dict[str, Any]) -> int:
-        query = "INSERT INTO turni_master (id_dipendente, data_ora_inizio_effettiva, data_ora_fine_effettiva, id_attivita, note) VALUES (?, ?, ?, ?, ?)"
-        params = (shift_data['id_dipendente'], shift_data['data_ora_inizio'].isoformat(), shift_data['data_ora_fine'].isoformat(), shift_data.get('id_attivita'), shift_data.get('note'))
+        """Crea turno salvando anche la squadra storica (se passata)."""
+        query = """
+        INSERT INTO turni_master 
+        (id_dipendente, id_squadra, data_ora_inizio_effettiva, data_ora_fine_effettiva, id_attivita, note) 
+        VALUES (?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            shift_data['id_dipendente'], 
+            shift_data.get('id_squadra'), # <--- Storicizzazione
+            shift_data['data_ora_inizio'].isoformat(), 
+            shift_data['data_ora_fine'].isoformat(), 
+            shift_data.get('id_attivita'), 
+            shift_data.get('note')
+        )
         cursor.execute(query, params)
         return cursor.lastrowid
 
@@ -177,21 +211,11 @@ class CrmDBManager:
     def delete_turno_master(self, cursor: sqlite3.Cursor, id_turno_master: int):
         cursor.execute("DELETE FROM turni_master WHERE id_turno_master = ?", (id_turno_master,))
 
-    # --- ★★★ NUOVO METODO ATOMICO PER OVERWRITE ★★★ ---
     def delete_overlaps_on_cursor(self, cursor: sqlite3.Cursor, id_dipendente: int, start_time: datetime.datetime, end_time: datetime.datetime) -> int:
-        """
-        Cancella i turni sovrapposti usando il cursore attivo della transazione.
-        Fondamentale per il 'Conflict Policy: Overwrite'.
-        """
-        query = """
-        DELETE FROM turni_master 
-        WHERE id_dipendente = ? 
-          AND data_ora_inizio_effettiva < ? 
-          AND data_ora_fine_effettiva > ?
-        """
+        query = "DELETE FROM turni_master WHERE id_dipendente = ? AND data_ora_inizio_effettiva < ? AND data_ora_fine_effettiva > ?"
         params = (id_dipendente, end_time.isoformat(), start_time.isoformat())
         cursor.execute(query, params)
-        return cursor.rowcount # Ritorna quanti ne ha cancellati
+        return cursor.rowcount
 
     def insert_turno_standard(self, id_turno: str, nome: str, inizio: str, fine: str, scavalca: bool):
          with self._connect() as conn:
@@ -254,20 +278,30 @@ class CrmDBManager:
             df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva'])[0], axis=1)
         return df.set_index('id_turno_master')
 
+    # --- LETTURA STORICA PER CALENDARIO (AGGIORNATO) ---
     def get_turni_master_range_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
-        # Legge dalle REGISTRAZIONI per correttezza calendario
+        """
+        Recupera dati per calendario:
+        1. Legge dalle REGISTRAZIONI (segmenti reali per fix ore 16->10).
+        2. Legge la SQUADRA STORICA dal Master (tm.id_squadra).
+        """
         start_str = start_date.isoformat()
         end_str = end_date.isoformat()
         q = """
         SELECT 
-            r.id_turno_master, a.cognome, a.nome, 
+            r.id_turno_master, 
+            a.cognome, a.nome, 
             r.data_ora_inizio AS data_ora_inizio_effettiva, 
             r.data_ora_fine AS data_ora_fine_effettiva,
             r.id_attivita, r.note, a.ruolo, r.id_dipendente,
             a.cognome || ' ' || a.nome AS dipendente_nome,
-            r.ore_presenza AS durata_ore 
+            r.ore_presenza AS durata_ore,
+            tm.id_squadra, -- RECUPERA SQUADRA STORICA
+            s.nome_squadra -- RECUPERA NOME SQUADRA
         FROM registrazioni_ore r
+        JOIN turni_master tm ON r.id_turno_master = tm.id_turno_master
         JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente
+        LEFT JOIN squadre s ON tm.id_squadra = s.id_squadra
         WHERE date(r.data_ora_inizio) BETWEEN ? AND ?
         ORDER BY a.cognome, r.data_ora_inizio
         """
