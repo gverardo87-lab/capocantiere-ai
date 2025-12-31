@@ -1,4 +1,4 @@
-# file: core/crm_db.py (Versione 28.1 - Fix Smart Delete)
+# file: core/crm_db.py (Versione 28.3 - Stable Fix)
 from __future__ import annotations
 import sqlite3
 from pathlib import Path
@@ -213,9 +213,7 @@ class CrmDBManager:
         cursor.execute("SELECT * FROM turni_master WHERE id_turno_master = ?", (id_turno_master,))
         return cursor.fetchone()
 
-    # --- NUOVO: METODO PER LEGGERE DETTAGLI SENZA CURSOR (Per Smart Delete) ---
     def get_turno_master_details(self, id_turno_master: int) -> Optional[Dict[str, Any]]:
-        """Restituisce i dettagli del turno master (per controlli logici)."""
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM turni_master WHERE id_turno_master = ?", (id_turno_master,)).fetchone()
             return dict(row) if row else None
@@ -240,7 +238,15 @@ class CrmDBManager:
     def get_turni_master_range_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
         q = "SELECT m.id_turno_master, a.cognome, a.nome, m.data_ora_inizio_effettiva, m.data_ora_fine_effettiva, m.id_attivita, m.note, a.ruolo, m.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome FROM turni_master m JOIN anagrafica_dipendenti a ON m.id_dipendente = a.id_dipendente WHERE date(m.data_ora_inizio_effettiva) BETWEEN ? AND ? ORDER BY a.cognome, m.data_ora_inizio_effettiva"
         with self._connect() as conn:
-            return pd.read_sql_query(q, conn, params=(start_date.isoformat(), end_date.isoformat()), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
+            df = pd.read_sql_query(q, conn, params=(start_date.isoformat(), end_date.isoformat()), parse_dates=['data_ora_inizio_effettiva', 'data_ora_fine_effettiva'])
+        
+        # --- ★ FIX KEYERROR: Calcolo durata_ore se il DF non è vuoto ---
+        if not df.empty:
+            df['durata_ore'] = df.apply(lambda row: ShiftEngine.calculate_professional_hours(
+                row['data_ora_inizio_effettiva'], row['data_ora_fine_effettiva']
+            )[0], axis=1) # [0] prende le ore_presenza
+        # -------------------------------------------------------------
+        return df
 
     def get_report_data_df(self, start_date: datetime.date, end_date: datetime.date) -> pd.DataFrame:
         q = "SELECT r.id_registrazione, r.data_ora_inizio, r.data_ora_fine, r.id_attivita, r.ore_presenza, r.ore_lavoro, r.tipo_ore, a.id_dipendente, a.cognome || ' ' || a.nome AS dipendente_nome, a.ruolo, r.id_turno_master FROM registrazioni_ore r JOIN anagrafica_dipendenti a ON r.id_dipendente = a.id_dipendente WHERE date(r.data_ora_inizio) BETWEEN ? AND ? AND a.attivo = 1 AND r.data_ora_inizio IS NOT NULL AND r.data_ora_fine IS NOT NULL"
