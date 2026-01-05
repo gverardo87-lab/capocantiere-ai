@@ -1,6 +1,4 @@
-# file: server/pages/14_Riepilogo_Calendario.py (Versione 31.1 - No Matplotlib Dependency)
-# Include: Storicizzazione Squadre, Fix Mixed Types, Styling Leggero
-
+# file: server/pages/14_Riepilogo_Calendario.py (Fix Visualizzazione Notturna)
 from __future__ import annotations
 import os
 import sys
@@ -72,7 +70,6 @@ if start_date > end_date:
     st.stop()
 
 # --- 2. CARICAMENTO DATI ---
-# Nota: get_turni_master_range_df ora restituisce anche 'id_squadra' e 'nome_squadra' (STORICO)
 try:
     with st.spinner("Caricamento dati storicizzati..."):
         df_turni = shift_service.get_turni_master_range_df(start_date, end_date)
@@ -114,7 +111,7 @@ else:
 
 def highlight_cells_info(val):
     """Stile per celle di testo (info turno)."""
-    if val != '-' and val != 0: return 'background-color: #1C2A44; color: white'
+    if val != '-' and val != 0: return 'background-color: #1C2A44; color: white; white-space: pre-wrap;' # pre-wrap per multiriga
     return ''
 
 def style_squadra_hours(val):
@@ -138,6 +135,10 @@ def style_dipendente_hours(val):
 
 # --- 5. VISUALIZZAZIONE ---
 
+# Funzione lambda per unire più turni nello stesso giorno (es. fine notte + inizio notte successiva)
+# Ordina i turni per orario per avere prima la mattina (00-06) e poi la sera (20-24)
+join_shifts = lambda x: " | ".join(sorted(list(set(x))))
+
 if view_mode == "Squadra":
     st.header("📅 Calendario per Squadra (Storicizzato)")
     
@@ -145,7 +146,8 @@ if view_mode == "Squadra":
     st.subheader("Turni Pianificati")
     piv_turni = df_turni.pivot_table(
         index='squadra_storica', columns='giorno', values='turno_info',
-        aggfunc='first', fill_value='-'
+        aggfunc=join_shifts, # <--- FIX: Unisce i turni invece di prendere solo il primo
+        fill_value='-'
     )
     piv_turni = piv_turni.reindex(columns=all_days, fill_value='-')
     piv_turni.columns = [col_fmt(c) for c in piv_turni.columns]
@@ -173,7 +175,8 @@ else: # Dipendente
     piv_turni_dip = df_turni.pivot_table(
         index=['squadra_storica', 'dipendente_nome'], 
         columns='giorno', values='turno_info',
-        aggfunc='first', fill_value='-'
+        aggfunc=join_shifts, # <--- FIX: Unisce i turni
+        fill_value='-'
     ).reindex(columns=all_days, fill_value='-')
     
     piv_turni_dip.columns = [col_fmt(c) for c in piv_turni_dip.columns]
