@@ -1,245 +1,136 @@
-# 🏗️ CapoCantiere AI
-## **Piattaforma AI-Driven per la Gestione Digitale dei Cantieri Navali**
+# 🏗️ CapoCantiere AI 2.0
+## **The Future of Naval Shipyard Management**
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.36.0-red.svg)](https://streamlit.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-green)]()
+[![Tech Stack](https://img.shields.io/badge/Stack-Streamlit%20%7C%20Python%20%7C%20SQLite-blue)]()
+[![AI Engine](https://img.shields.io/badge/AI-Ollama%20%7C%20Llama3%20%7C%20RAG-purple)]()
+[![License](https://img.shields.io/badge/License-Proprietary-orange)]()
 
----
-
-## 🎯 **Executive Summary**
-
-**CapoCantiere AI** è una piattaforma SaaS innovativa che rivoluziona la gestione dei cantieri navali attraverso l'intelligenza artificiale. La soluzione integra workflow optimization, data analytics avanzata e assistenti AI specializzati per ottimizzare l'allocazione delle risorse e massimizzare l'efficienza operativa.
-
-### **Valore di Mercato**
-- **Mercato TAM**: €12.5B (Shipbuilding digitalization globally)
-- **Mercato SAM**: €2.8B (European naval industry software)
-- **Mercato SOM**: €180M (AI-driven construction management)
-
-### **ROI Comprovato**
-- **25-40%** riduzione tempi di progetto
-- **30%** ottimizzazione allocazione risorse
-- **20%** riduzione sforamenti budget
-- **50%** riduzione tempo ricerca documentazione
+> **"Unire la precisione dell'ERP con l'intelligenza predittiva dell'AI per eliminare le inefficienze operative nei cantieri navali."**
 
 ---
 
-## 🚀 **Opportunità di Investimento**
+## 🚀 **Executive Summary**
 
-### **Problema di Mercato**
-Il settore navale soffre di:
-- Gestione manuale inefficiente delle risorse (67% dei cantieri)
-- Documentazione tecnica frammentata e inaccessibile
-- Pianificazione progetti basata su esperienza, non su dati
-- Perdite economiche per sforamenti budget del 15-25%
+**CapoCantiere AI** è una piattaforma *Vertical SaaS* progettata specificamente per le esigenze uniche della cantieristica navale. Risolve il problema critico della **discrepanza tra pianificazione (Gantt) e realtà operativa (Cantiere)**.
 
-### **La Nostra Soluzione**
-Piattaforma AI-first che automatizza:
-1. **Allocazione Intelligente** delle risorse umane
-2. **Analisi Predittiva** dei colli di bottiglia
-3. **Knowledge Management** avanzato della documentazione
-4. **Real-time Analytics** per decision making data-driven
+A differenza dei gestionali generici, CapoCantiere integra:
+1.  **AI Generativa Locale**: Per interrogare manuali tecnici e normative in secondi (RAG).
+2.  **Algoritmi Predittivi**: Per anticipare ritardi e colli di bottiglia nel cronoprogramma.
+3.  **Psicologia Operativa**: Strumenti di stampa e reportistica studiati per ridurre le contestazioni con la forza lavoro.
 
 ---
 
-## 💡 **Innovazione Tecnologica**
+## 💎 **Core Features**
 
-### **AI & Machine Learning Stack**
-```
-🧠 Large Language Models (Ollama)
-📊 Workflow Optimization Engine
-🔍 RAG (Retrieval-Augmented Generation)
-📈 Predictive Analytics
-🎯 Cross-Encoder Reranking
-```
+### **1. Pianificazione Intelligente & HR**
+* **Logic-Driven Shifts**: Gestione complessa di turni (Giorno/Notte/Sera) con controllo automatico dei protocolli di riposo.
+* **Smart Merge Technology**: Visualizzazione intelligente dei turni notturni (es. 20:00-06:00 uniti visivamente).
+* **Visual Badging**: Rilevamento automatico dei cambi di ritmo circadiano (es. passaggio Giorno ➔ Notte) per monitorare lo stress operativo.
 
-### **Architettura Scalabile**
-- **Microservizi modulari** per crescita enterprise
-- **Database multi-tenant** (SQLite → PostgreSQL)
-- **API-first approach** per integrazioni
-- **Cloud-native** deployment ready
+### **2. Controllo di Gestione ("Modello Marsiglia")**
+* **Real-Time Margin Audit**: Calcolo istantaneo del margine operativo giornaliero per squadra (*Costo Vivo* vs *Tariffa Riconosciuta*).
+* **Financial Alerting**: Notifiche automatiche per scostamenti negativi (>5%).
 
----
+### **3. Workflow Intelligence (AI)**
+* **BottleNeck Detection**: L'AI analizza il cronoprogramma e incrocia i dati con la capacità produttiva per predire ritardi futuri.
+* **Naval Templates**: Libreria precaricata di cicli di lavoro navali (es. *Montaggio Scafo*, *Fuori Apparato Motore*).
 
-## 🏭 **Funzionalità Enterprise**
-
-### **1. Workflow Intelligence Engine**
-- Analisi automatica delle dipendenze tra attività
-- Ottimizzazione real-time delle sequenze di lavoro
-- Predizione colli di bottiglia con anticipo di 2-4 settimane
-
-### **2. Assistente Tecnico AI**
-- Knowledge base semantica di oltre 10,000 documenti
-- Risposte contestuali con citazioni precise
-- Supporto multilingua (IT/EN/ES)
-
-### **3. Resource Allocation Optimizer**
-- Algoritmi proprietari per allocazione ottimale
-- Bilanciamento automatico workload per ruolo
-- Suggerimenti azioni correttive real-time
-
-### **4. Advanced Analytics Dashboard**
-- KPI predittivi per performance progetti
-- Budget variance analysis con alerting
-- Gantt interattivi con critical path analysis
+### **4. Knowledge Base Attiva (RAG)**
+* **Expert Technical Chat**: Assistente virtuale addestrato su PDF tecnici (normative, schemi, datasheet) con citazione delle fonti.
+* **Privacy-First**: Utilizza LLM locali (Ollama/Llama3) garantendo che i dati sensibili non lascino mai il server aziendale.
 
 ---
 
-## 📊 **Metriche di Performance**
+## 📂 **Mappa dei Moduli (Sitemap)**
 
-### **Efficienza Operativa**
-- **Tempo medio setup nuovo progetto**: 2 ore (vs 2 giorni manuale)
-- **Accuratezza previsioni budget**: 92%
-- **Riduzione tempi ricerca documentazione**: 85%
-- **Uptime sistema**: 99.7%
+L'applicazione è strutturata in moduli verticali accessibili via sidebar:
 
-### **Adozione Utente**
-- **Time-to-value**: < 1 settimana
-- **User satisfaction**: 94% (NPS +67)
-- **Learning curve**: 3 giorni training medio
+### **📊 Area Direzionale**
+* **`01_Reportistica.py`**: Dashboard KPI finanziari, margini e analisi trend.
+* **`04_Cronoprogramma.py`**: Visualizzazione Gantt interattiva e importazione Excel.
+* **`05_Workflow_Analysis.py`**: Motore AI per l'analisi predittiva dei processi.
 
----
+### **🛠️ Area Operativa**
+* **`10_Pianificazione_Turni.py`**: Griglia principale per l'assegnazione turni (Drag & Drop).
+* **`11_Anagrafica.py`**: Gestione personale, costi orari, livelli skill e scadenze certificati.
+* **`12_Gestione_Squadre.py`**: Composizione dinamica dei team di lavoro.
+* **`13_Control_Room_Ore.py`**: Pannello di verifica e validazione grezza delle presenze.
+* **`14_Riepilogo_Calendario.py`**: Vista a calendario (Settimanale/Mensile) per l'allocazione risorse.
+* **`15_Stampe_Operative.py`**: Generatore di cedolini e fogli firma "Anti-Contestazione" (Dark Mode Compatible).
 
-## 🏢 **Market Positioning**
+### **🧠 Area Intelligence & Supporto**
+* **`02_Expert_Chat_Enhanced.py`**: Interfaccia Chat RAG per interrogare la documentazione tecnica.
+* **`03_Esperto_Tecnico.py`**: Modulo legacy per query specifiche (in fase di merge).
+* **`06_Document_Explorer.py`**: Gestione file PDF e stato dell'indicizzazione vettoriale.
 
-### **Target Segments**
-1. **Tier 1**: Grandi cantieri navali (>500M€ fatturato)
-2. **Tier 2**: Cantieri specializzati (50-500M€)
-3. **Tier 3**: PMI navali innovative (5-50M€)
-
-### **Go-to-Market Strategy**
-- **Direct Sales** per enterprise accounts
-- **Channel Partners** per mercato SMB
-- **Freemium Model** per market penetration
-
-### **Competitive Advantage**
-- **First-mover advantage** nell'AI navale
-- **Domain expertise** settore specifico
-- **Tecnologia proprietaria** non replicabile
-- **Barrier to entry** elevate per competitor
+### **🌤️ Moduli Ambientali**
+* **`07_Meteo_Cantiere.py`**: Previsioni operative localizzate per pianificazione outdoor.
+* **`08_Bollettino_Mare.py`**: Dati specifici (onda, vento) per operazioni in bacino o movimentazioni.
 
 ---
 
-## 💰 **Modello di Business**
+## 🏗️ **Architettura Tecnica**
 
-### **Revenue Streams**
-1. **SaaS Subscriptions** (70% ricavi)
-   - Starter: €299/mese per cantiere
-   - Professional: €899/mese
-   - Enterprise: €2,499/mese
+Il progetto adotta un'architettura **Service-Oriented** modulare, pronta per la scalabilità.
 
-2. **Professional Services** (20% ricavi)
-   - Implementation: €15K-50K
-   - Training: €5K-15K
-   - Custom Development: €50K-200K
+```text
+/capocantiere-ai-2.0
+├── core/                       # BACKEND & BUSINESS LOGIC
+│   ├── shift_service.py        # Gestore Turni, Validazione e Calcoli
+│   ├── crm_db.py               # Data Access Layer (SQLite - Dati Operativi)
+│   ├── schedule_db.py          # Data Access Layer (SQLite - Cronoprogramma)
+│   ├── workflow_engine.py      # Motore AI Predittivo
+│   ├── knowledge_chain.py      # Motore RAG (LangChain + ChromaDB)
+│   └── weather_api.py          # Integrazione OpenWeatherMap
+│
+├── server/                     # FRONTEND (Streamlit)
+│   ├── app.py                  # Entry Point & Navigation
+│   └── pages/                  # Moduli Applicativi (Vedi Sitemap)
+│
+├── data/                       # PERSISTENCE
+│   ├── crm.db                  # Database Relazionale Operai/Turni
+│   └── schedule.db             # Database Cronoprogramma
+│
+└── knowledge_base/             # AI MEMORY
+    ├── chroma_db/              # Vector Store
+    └── documents/              # PDF Source Files
+⚙️ Installazione Rapida (Dev)
+Prerequisiti
+Python 3.9+
 
-3. **Data & Analytics** (10% ricavi)
-   - Industry benchmarks
-   - Predictive insights
-   - Market intelligence
+Ollama (installato e running con ollama serve).
 
-### **Unit Economics**
-- **CAC**: €3,500 (Payback: 8 mesi)
-- **LTV**: €47,000 (LTV/CAC: 13.4x)
-- **Gross Margin**: 87%
-- **Churn Rate**: 3% annuale
+Modello AI: ollama pull llama3 (o mistral).
 
----
+Setup
+Clona il repo:
 
-## 📈 **Roadmap & Scaling**
+Bash
 
-### **Q1-Q2 2025: Product-Market Fit**
-- [ ] Beta launch con 5 cantieri pilota
-- [ ] Mobile app development
-- [ ] API ecosystem expansion
-- [ ] Certificazioni ISO/SOC2
+git clone [https://github.com/tuo-org/capocantiere-ai.git](https://github.com/tuo-org/capocantiere-ai.git)
+cd capocantiere-ai
+Virtual Env:
 
-### **Q3-Q4 2025: Market Expansion**
-- [ ] International expansion (Germania, Francia)
-- [ ] Enterprise features (SSO, RBAC)
-- [ ] Integrazioni ERP (SAP, Oracle)
-- [ ] AI predictive maintenance
+Bash
 
-### **2026: Platform Evolution**
-- [ ] IoT sensor integration
-- [ ] Blockchain supply chain
-- [ ] AR/VR workflow training
-- [ ] Industry marketplace
+python -m venv venv
+source venv/bin/activate  # o .\venv\Scripts\activate su Windows
+Installa Dipendenze:
 
----
+Bash
 
-## 🔧 **Tecnologie & Architettura**
+pip install -r requirements.txt
+Avvia:
 
-### **Tech Stack Moderna**
-```python
-Frontend: Streamlit (React roadmap)
-Backend: Python/FastAPI
-Database: SQLite → PostgreSQL
-AI/ML: Ollama, LangChain, ChromaDB
-Analytics: Plotly, Pandas
-Infrastructure: Docker, Kubernetes
-```
+Bash
 
-### **Sicurezza & Compliance**
-- Crittografia AES-256 per dati sensibili
-- GDPR compliance nativo
-- Audit logs completi
-- Backup automatici giornalieri
+streamlit run server/app.py
+🔮 Roadmap & Vision
+[ ] Q3 2026: Migrazione Database a PostgreSQL per supporto multi-utente concorrente.
 
----
+[ ] Q4 2026: Rilascio App Mobile "Read-Only" per Capisquadra (Tablet).
 
-## 👥 **Team & Advisory**
+[ ] Q1 2027: Modulo IoT per integrazione timbrature automatiche.
 
-### **Founding Team**
-- **CTO**: 15+ anni esperienza AI/ML enterprise
-- **Maritime Expert**: 20+ anni settore navale
-- **Business Development**: Track record SaaS B2B
-
-### **Advisory Board**
-- Former CTO di Fincantieri
-- AI Research Director (Università Padova)
-- Maritime Investment Fund Partner
-
----
-
-## 💵 **Richiesta di Investimento**
-
-### **Serie A: €2.5M**
-
-**Utilizzo Fondi:**
-- **40%** Product Development & R&D
-- **35%** Sales & Marketing
-- **15%** Team Expansion
-- **10%** Working Capital
-
-**Milestones 18 mesi:**
-- **50 cantieri clienti** attivi
-- **€1.2M ARR** (Annual Recurring Revenue)
-- **Break-even** operativo
-- **Serie B** readiness
-
-### **Exit Strategy**
-- **Strategic Acquisition** da Maritime OEM (Fincantieri, Meyer Werft)
-- **IPO** dopo raggiungimento €50M ARR
-- **Private Equity** rollup settore construction tech
-
----
-
-## 📞 **Contatti Investitori**
-
-**Giacomo Verardo** - Founder & CEO  
-📧 giacomo.verardo@gmail.com  
-📱 🏢 Genova Maritime Tech Hub  
-
-## 🔒 **Legal & IP**
-
-- **Patent Pending**: Workflow optimization algorithms
-- **Trademark**: CapoCantiere® registered EU
-- **Open Source**: Core framework (strategic community building)
-- **Proprietary**: AI models e algoritmi domain-specific
-
----
-
-**"Trasformiamo i cantieri navali in Industry 4.0 powered factories"**
-
-*La prossima rivoluzione industriale nel settore navale inizia oggi.*
+Contatti & Sviluppo Lead Developer: G. Verardo Versione: 2.1 Stable (Gennaio 2026)
