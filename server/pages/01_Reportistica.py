@@ -1,4 +1,4 @@
-# file: server/pages/01_Reportistica.py (Versione 35.0 - DARK MODE SAFE)
+# file: server/pages/01_Reportistica.py (Versione 36.0 - PLATINUM: Audit Inattaccabile)
 
 from __future__ import annotations
 import os
@@ -26,23 +26,24 @@ st.set_page_config(page_title="Centro Report & Audit Costi", page_icon="📊", l
 st.title("📊 Centro Report & Audit Industriale")
 st.markdown("Analisi Operativa e **Simulatore Finanziario Integrato**.")
 
-# --- CSS CUSTOM PER DARK MODE ---
-# Questo blocco rende le tabelle HTML leggibili in entrambi i temi
+# --- CSS CUSTOM PER DARK MODE & PRINT ---
 st.markdown("""
 <style>
     .audit-table {
         width: 100%;
         border-collapse: collapse;
         font-family: 'Source Sans Pro', sans-serif;
-        color: var(--text-color); /* Si adatta al tema */
+        font-variant-numeric: tabular-nums;
+        color: var(--text-color);
     }
     .audit-table th {
         text-align: left;
         padding: 10px;
         border-bottom: 2px solid #555;
-        font-size: 0.9rem;
-        opacity: 0.8;
+        font-size: 0.85rem;
         text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.8;
     }
     .audit-table td {
         padding: 8px 10px;
@@ -51,26 +52,33 @@ st.markdown("""
     }
     .audit-highlight {
         font-weight: bold;
-        border-top: 1px solid #777;
+        background-color: rgba(255, 255, 255, 0.05);
     }
-    .text-green { color: #2ecc71; } /* Verde leggibile su dark e light */
-    .text-red { color: #e74c3c; }   /* Rosso leggibile su dark e light */
-    .text-muted { opacity: 0.7; font-size: 0.9em; }
+    .total-row td {
+        border-top: 2px solid var(--text-color);
+        font-weight: bold;
+        font-size: 1.1em;
+        padding-top: 15px;
+    }
+    .text-green { color: #4ade80; }
+    .text-red { color: #f87171; }
+    .text-muted { opacity: 0.6; font-size: 0.9em; }
+    .text-warning { color: #fbbf24; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- HELPER STILI (DATAFRAME) ---
+# --- HELPER STILI ---
 def style_internal(val):
-    if not isinstance(val, (int, float)) or val == 0: return 'color: rgba(128,128,128,0.3)'
-    if val < 8: return 'color: #fca5a5' # Rosso chiaro
-    if val <= 10: return 'color: #93c5fd' # Blu chiaro
-    return 'color: #4ade80; font-weight: bold' # Verde acceso
+    if not isinstance(val, (int, float)) or val == 0: return 'color: #e0e0e0'
+    if val < 8: return 'color: #fca5a5' 
+    if val <= 10: return 'color: #93c5fd' 
+    return 'color: #4ade80; font-weight: bold'
 
 def style_external(val):
-    if not isinstance(val, (int, float)) or val == 0: return 'color: rgba(128,128,128,0.3)'
-    if val < 8: return 'color: #fdba74' # Arancio chiaro
-    if val <= 9: return 'color: #fbbf24' # Giallo/Ambra
-    return 'color: #f97316; font-weight: bold' # Arancio acceso
+    if not isinstance(val, (int, float)) or val == 0: return 'color: #e0e0e0'
+    if val < 8: return 'color: #fdba74' 
+    if val <= 9: return 'color: #fbbf24' 
+    return 'color: #f97316; font-weight: bold' 
 
 # --- CARICAMENTO DATI ---
 @st.cache_data(ttl=600)
@@ -204,65 +212,84 @@ with tab3:
     st.dataframe(df_exp, hide_index=True)
 
 # ==============================================================================
-# ★ TAB 4: AUDIT UNIFICATO (DARK MODE READY) ★
+# ★ TAB 4: AUDIT UNIFICATO (PLATINUM EDITION) ★
 # ==============================================================================
 with tab_audit:
-    st.markdown("## ⚖️ Control Room Finanziaria (Full Costing)")
-    st.info("ℹ️ Analisi con costi occulti (TFR, 13ma, DPI, Noli) inclusi.")
+    st.markdown("## ⚖️ Control Room Finanziaria")
+    st.markdown("Analisi strutturata per SRLS con regime di **Paga Globale**.")
     
     # --- INPUT ---
-    with st.expander("🛠️ CONFIGURAZIONE PARAMETRI", expanded=True):
+    with st.expander("🛠️ CONFIGURAZIONE PARAMETRI DI COMMESSA", expanded=True):
         ic1, ic2, ic3, ic4 = st.columns(4)
         
         with ic1:
-            st.markdown("**1. STRUTTURA SQUADRA**")
+            st.markdown("**1. FORZA LAVORO**")
             n_op = st.number_input("N. Operai", 1, 50, 6)
             n_cap = st.number_input("N. Capisquadra", 0, 10, 1)
             tot_pax = n_op + n_cap
-            st.caption(f"Totale: {tot_pax} Risorse")
+            st.info(f"Squadra Tipo: **{tot_pax}** Persone")
 
         with ic2:
-            st.markdown("**2. COSTO LAVORO (SRLS)**")
-            net_op = st.number_input("Paga Globale Op. (€/h)", 0.0, 50.0, 13.00, format="%.2f", help="Lordo Busta inclusivo di tutto")
-            one_op = st.number_input("Contributi Op. (€/gg)", 0.0, 200.0, 55.00, format="%.2f", help="INPS/INAIL su paga base")
+            st.markdown("**2. COSTO DEL LAVORO**")
+            # Qui si distingue tra ciò che va all'operaio e ciò che va allo stato
+            net_op = st.number_input("Paga Globale Op. (€/h)", 0.0, 50.0, 13.00, format="%.2f", help="Include ratei, TFR, 13ma spalmati nell'ora")
+            one_op = st.number_input("Contributi Op. (€/gg)", 0.0, 200.0, 42.00, format="%.2f", help="INPS/INAIL su Paga Base (bassa)")
             net_cap = st.number_input("Paga Globale Capo (€/h)", 0.0, 60.0, 16.00, format="%.2f")
-            one_cap = st.number_input("Contributi Capo (€/gg)", 0.0, 250.0, 65.00, format="%.2f")
+            one_cap = st.number_input("Contributi Capo (€/gg)", 0.0, 250.0, 48.00, format="%.2f")
 
         with ic3:
-            st.markdown("**3. SPESE VIVE**")
-            ticket = st.number_input("Ticket/Viaggio (€/gg)", 0.0, 100.0, 20.00, format="%.2f")
-            consum = st.number_input("Consumabili/Noli (€/gg)", 0.0, 100.0, 5.00, format="%.2f", help="DPI, Dischi, Attrezzatura")
-            ovh = st.number_input("Spese Gen. (€/h fatt.)", 0.0, 20.0, 2.28, format="%.2f")
+            st.markdown("**3. SPESE OPERATIVE**")
+            ticket = st.number_input("Ticket/Viaggio (€/gg)", 0.0, 100.0, 20.00, format="%.2f", help="Costo vivo giornaliero per persona")
+            consum = st.number_input("Consumabili/Noli (€/gg)", 0.0, 100.0, 5.00, format="%.2f", help="DPI, Dischi, Attrezzatura, Furgone")
+            ovh = st.number_input("Overheads (€/h fatt.)", 0.0, 20.0, 2.28, format="%.2f", help="Spese struttura ufficio/sede")
 
         with ic4:
-            st.markdown("**4. COMMESSA**")
+            st.markdown("**4. COMMESSA & TARGET**")
             h_pay = st.number_input("Ore Busta (Input)", 0.0, 15.0, 10.0, step=0.5)
             h_bill = st.number_input("Ore Fattura (Output)", 0.0, 15.0, 9.0, step=0.5)
             tariffa = st.number_input("Tariffa Cliente (€/h)", 0.0, 100.0, 27.00, format="%.2f")
             gg_mese = st.number_input("Giorni/Mese", 1, 31, 22)
-            n_squadre = st.number_input("N. Squadre", 1, 20, 1)
+            n_squadre = st.number_input("Moltiplicatore Squadre", 1, 20, 1)
 
-    # --- CALCOLI ---
-    costo_pers_op_gg = (net_op * h_pay) + one_op
-    costo_pers_cap_gg = (net_cap * h_pay) + one_cap
+    # --- MOTORE DI CALCOLO ---
     
+    # Costi Personale (Split per chiarezza)
+    # Paga Globale Giornaliera (Soldi all'uomo)
+    pay_op_gg = net_op * h_pay 
+    pay_cap_gg = net_cap * h_pay
+    
+    # Contributi Giornalieri (Soldi allo Stato)
+    # one_op e one_cap sono già giornalieri
+    
+    # Costo Pieno Uomo Giorno (Senza spese vive)
+    costo_full_op_gg = pay_op_gg + one_op
+    costo_full_cap_gg = pay_cap_gg + one_cap
+    
+    # Spese Vive Totali
     spese_vive_unit_gg = ticket + consum
     spese_vive_tot_gg = spese_vive_unit_gg * tot_pax
     
-    costo_labor_sq_gg = (costo_pers_op_gg * n_op) + (costo_pers_cap_gg * n_cap)
+    # Costo Totale Squadra
+    tot_costo_op = costo_full_op_gg * n_op
+    tot_costo_cap = costo_full_cap_gg * n_cap
+    costo_labor_sq_gg = tot_costo_op + tot_costo_cap
     costo_pieno_sq_gg = costo_labor_sq_gg + spese_vive_tot_gg
     
+    # Ricavi
     h_bill_sq = h_bill * tot_pax
     r_tot_sq_gg = h_bill_sq * tariffa
     
+    # Margini
     marg_ind_gg = r_tot_sq_gg - costo_pieno_sq_gg
-    
     c_ovh_sq_gg = ovh * h_bill_sq
     marg_net_gg = marg_ind_gg - c_ovh_sq_gg
     
+    # KPI e Proiezioni
     costo_totale_azienda = costo_pieno_sq_gg + c_ovh_sq_gg
-    tariffa_bep = costo_totale_azienda / h_bill_sq if h_bill_sq > 0 else 0
-
+    # Costo Orario Aziendale Reale (per confronto con tariffa)
+    costo_orario_reale = costo_totale_azienda / h_bill_sq if h_bill_sq > 0 else 0
+    tariffa_bep = costo_orario_reale # è la stessa cosa concettualmente
+    
     proj_mese = marg_net_gg * gg_mese * n_squadre
     tot_pax_campo = tot_pax * n_squadre
 
@@ -273,14 +300,12 @@ with tab_audit:
     with c_left:
         st.subheader("🧾 Scontrino Analitico (Squadra Giorno)")
         
-        # HTML TABLE - DARK MODE COMPATIBLE
-        # Usiamo classi CSS definite all'inizio, niente stili inline con colori fissi
         html_tab = f"""
         <table class="audit-table">
             <thead>
                 <tr>
-                    <th width="40%">VOCE</th>
-                    <th width="35%" style="text-align:right;">DETTAGLIO</th>
+                    <th width="45%">VOCE DI BILANCIO</th>
+                    <th width="30%" style="text-align:right;">FORMULA</th>
                     <th width="25%" style="text-align:right;">IMPORTO</th>
                 </tr>
             </thead>
@@ -292,16 +317,16 @@ with tab_audit:
                 </tr>
                 <tr>
                     <td>(-) Manodopera Operai ({n_op})</td>
-                    <td class="text-muted" style="text-align:right;">(€{net_op}x{h_pay}h)+€{one_op}</td>
-                    <td class="text-red" style="text-align:right;">€ {costo_pers_op_gg*n_op:,.2f}</td>
+                    <td class="text-muted" style="text-align:right;">{n_op} x [({net_op}x{h_pay})+{one_op}]</td>
+                    <td class="text-red" style="text-align:right;">€ {tot_costo_op:,.2f}</td>
                 </tr>
                 <tr>
                     <td>(-) Manodopera Capi ({n_cap})</td>
-                    <td class="text-muted" style="text-align:right;">(€{net_cap}x{h_pay}h)+€{one_cap}</td>
-                    <td class="text-red" style="text-align:right;">€ {costo_pers_cap_gg*n_cap:,.2f}</td>
+                    <td class="text-muted" style="text-align:right;">{n_cap} x [({net_cap}x{h_pay})+{one_cap}]</td>
+                    <td class="text-red" style="text-align:right;">€ {tot_costo_cap:,.2f}</td>
                 </tr>
                 <tr>
-                    <td>(-) Spese Vive (Ticket/Noli)</td>
+                    <td>(-) Spese Vive (Ticket+Noli)</td>
                     <td class="text-muted" style="text-align:right;">€{spese_vive_unit_gg:.2f} x {tot_pax} Pax</td>
                     <td class="text-red" style="text-align:right;">€ {spese_vive_tot_gg:,.2f}</td>
                 </tr>
@@ -311,14 +336,14 @@ with tab_audit:
                     <td style="text-align:right;">€ {marg_ind_gg:,.2f}</td>
                 </tr>
                 <tr>
-                    <td>(-) Spese Generali</td>
+                    <td>(-) Overheads (Sede/Ufficio)</td>
                     <td class="text-muted" style="text-align:right;">€{ovh} x {h_bill_sq}h fatt.</td>
                     <td class="text-red" style="text-align:right;">€ {c_ovh_sq_gg:,.2f}</td>
                 </tr>
-                <tr style="border-top: 2px solid var(--text-color); font-size:1.1em;">
+                <tr class="total-row">
                     <td><b>= UTILE NETTO (Giorno)</b></td>
                     <td></td>
-                    <td style="text-align:right; font-weight:bold; color: {'#4ade80' if marg_net_gg >= 0 else '#f87171'};">
+                    <td style="text-align:right; color: {'#4ade80' if marg_net_gg >= 0 else '#f87171'};">
                         € {marg_net_gg:,.2f}
                     </td>
                 </tr>
@@ -328,36 +353,44 @@ with tab_audit:
         st.markdown(html_tab, unsafe_allow_html=True)
         
         st.write("")
-        st.markdown("#### 🚀 Proiezione")
+        st.markdown("#### 🎯 Indicatori Chiave (KPI)")
         kp1, kp2 = st.columns(2)
-        kp1.metric("Tariffa BEP (Pareggio)", f"€ {tariffa_bep:.2f}", delta=f"Attuale: € {tariffa:.2f}", delta_color="normal" if tariffa>=tariffa_bep else "inverse")
-        kp2.metric(f"Risultato Mese ({tot_pax_campo} Pax)", f"€ {proj_mese:,.2f}", delta="UTILE" if proj_mese>=0 else "PERDITA", delta_color="normal" if proj_mese>=0 else "inverse")
+        kp1.metric("Costo Orario Aziendale (Full)", f"€ {costo_orario_reale:.2f}/h", 
+                   delta=f"Margine: {tariffa - costo_orario_reale:.2f}/h", delta_color="normal" if tariffa >= costo_orario_reale else "inverse",
+                   help="Questo è quanto ti costa REALMENTE un'ora lavorata inclusi ticket, oneri, spese generali.")
+        kp2.metric(f"Proiezione Mese ({tot_pax_campo} Pax)", f"€ {proj_mese:,.0f}", 
+                   delta="UTILE" if proj_mese>=0 else "PERDITA", delta_color="normal" if proj_mese>=0 else "inverse")
 
     with c_right:
-        st.subheader("📉 Cascata Margini")
+        st.subheader("🍰 Composizione Costo Uomo")
+        # Donut Chart per spiegare dove vanno i soldi di 1 Uomo
+        # Usiamo l'operaio tipo come riferimento
+        costo_tot_uomo_tipo = costo_full_op_gg + spese_vive_unit_gg + (ovh * h_bill)
         
-        fig = go.Figure(go.Waterfall(
-            orientation = "v",
-            measure = ["relative", "relative", "relative", "relative", "total", "relative", "total"],
-            x = ["Fatturato", "Manodopera", "Ticket/Noli", "Margine Ind.", "CHECK", "Spese Gen.", "Utile Netto"],
+        labels = ['Paga Globale (Dipendente)', 'Contributi (Stato)', 'Spese Vive (Noli/Ticket)', 'Struttura (Sede)']
+        values = [pay_op_gg, one_op, spese_vive_unit_gg, (ovh * h_bill)]
+        
+        fig_pie = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.4, marker_colors=['#3b82f6', '#ef4444', '#f59e0b', '#6b7280'])])
+        fig_pie.update_layout(showlegend=True, height=300, margin=dict(t=0,b=0,l=0,r=0), legend=dict(orientation="h", yanchor="bottom", y=-0.5, xanchor="center", x=0.5))
+        st.plotly_chart(fig_pie, use_container_width=True)
+        
+        st.subheader("📉 Cascata Margini")
+        fig_water = go.Figure(go.Waterfall(
+            orientation = "v", measure = ["relative", "relative", "relative", "relative", "total", "relative", "total"],
+            x = ["Fatturato", "Manodopera", "Contributi", "Spese Vive", "Margine Ind.", "Overheads", "Utile"],
             y = [
                 r_tot_sq_gg, 
-                -(costo_labor_sq_gg), 
-                -(spese_vive_tot_gg), 
+                -((pay_op_gg*n_op)+(pay_cap_gg*n_cap)), # Solo paga globale
+                -((one_op*n_op)+(one_cap*n_cap)),       # Solo contributi
+                -spese_vive_tot_gg, 
                 0, 
-                marg_ind_gg, 
                 -c_ovh_sq_gg, 
                 0
             ],
             connector = {"line":{"color":"#666"}},
-            decreasing = {"marker":{"color":"#f87171"}}, # Rosso soft
-            increasing = {"marker":{"color":"#4ade80"}}, # Verde soft
-            totals = {"marker":{"color":"#60a5fa"}}      # Blu soft
+            decreasing = {"marker":{"color":"#f87171"}},
+            increasing = {"marker":{"color":"#4ade80"}},
+            totals = {"marker":{"color":"#60a5fa"}}
         ))
-        fig.update_layout(title="Analisi Squadra (1 Giorno)", showlegend=False, height=500, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="grey")) # Dark mode friendly
-        st.plotly_chart(fig, use_container_width=True)
-        
-        if proj_mese < 0:
-            st.error(f"🛑 **STOP:** Con {tot_pax_campo} uomini perdi **€ {abs(proj_mese):,.0f} al mese**.")
-        else:
-            st.success(f"✅ **GO:** Con {tot_pax_campo} uomini generi **€ {proj_mese:,.0f} al mese**.")
+        fig_water.update_layout(showlegend=False, height=300, margin=dict(t=20,b=20,l=0,r=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig_water, use_container_width=True)
