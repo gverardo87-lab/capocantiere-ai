@@ -1,4 +1,4 @@
-# file: server/pages/01_Reportistica.py (Versione 21.1 - Fix No-Matplotlib)
+# file: server/pages/01_Reportistica.py (Versione 32.0 - GOLD MASTER)
 
 from __future__ import annotations
 import os
@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from datetime import date
 import io 
 
-# Aggiungiamo la root del progetto al path per importare i moduli 'core'
+# Setup path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 try:
@@ -18,364 +18,293 @@ try:
     from core.schedule_db import schedule_db_manager
     from core.logic import ShiftEngine 
 except ImportError as e:
-    st.error(f"Errore critico: Impossibile importare i moduli: {e}")
+    st.error(f"Errore critico moduli: {e}")
     st.stop()
 
-st.set_page_config(page_title="Centro Report & Audit Costi", page_icon="📊", layout="wide")
-st.title("📊 Centro Report & Audit Industriale")
-st.markdown("Analisi Operativa e **Certificazione Costi di Commessa**.")
+st.set_page_config(page_title="Controllo Gestione", page_icon="📊", layout="wide")
 
-# --- HELPER STILI (SENZA MATPLOTLIB) ---
+st.title("📊 Centro Report & Audit Industriale")
+st.markdown("Analisi Operativa e **Simulatore di Redditività Commessa**.")
+
+# --- HELPER STILI ---
 def style_internal(val):
-    """Scala di Blu per Statino Interno (CSS Puro)"""
     if not isinstance(val, (int, float)) or val == 0: return 'color: #e0e0e0'
-    if val < 8: return 'background-color: #dbeafe; color: black' # Blu chiarissimo (Sotto soglia)
-    if val <= 10: return 'background-color: #93c5fd; color: black' # Blu medio (Standard)
-    return 'background-color: #2563eb; color: white' # Blu scuro (Straordinario)
+    if val < 8: return 'background-color: #dbeafe; color: black' 
+    if val <= 10: return 'background-color: #93c5fd; color: black' 
+    return 'background-color: #2563eb; color: white'
 
 def style_external(val):
-    """Scala di Arancio per Report Cantiere (CSS Puro)"""
     if not isinstance(val, (int, float)) or val == 0: return 'color: #e0e0e0'
-    if val < 8: return 'background-color: #ffedd5; color: black' # Arancio chiarissimo
-    if val <= 9: return 'background-color: #fdba74; color: black' # Arancio medio (Standard Cantiere)
-    return 'background-color: #ea580c; color: white' # Arancio scuro (Extra)
+    if val < 8: return 'background-color: #ffedd5; color: black' 
+    if val <= 9: return 'background-color: #fdba74; color: black' 
+    return 'background-color: #ea580c; color: white' 
 
-# --- 1. FUNZIONI DI CARICAMENTO DATI ---
-
+# --- CARICAMENTO DATI ---
 @st.cache_data(ttl=600)
 def load_activities_map():
-    activities_map = {
-        "VIAGGIO": "VIAGGIO (Trasferta)",
-        "STRAORDINARIO": "STRAORDINARIO (Generico)",
-        "OFFICINA": "OFFICINA (Lavoro Interno)",
-        "-1": "N/A (Non Specificato)"
-    }
+    activities_map = {"VIAGGIO": "VIAGGIO", "STRAORDINARIO": "STRAORDINARIO", "OFFICINA": "OFFICINA", "-1": "N/A"}
     try:
         schedule_data = schedule_db_manager.get_schedule_data()
-        df_schedule = pd.DataFrame(schedule_data)
-        if not df_schedule.empty:
-            schedule_map = df_schedule.set_index('id_attivita')['descrizione'].to_dict()
-            activities_map.update(schedule_map)
-    except Exception as e:
-        # print(f"Errore caricamento cronoprogramma per mappa: {e}")
-        pass
+        df_s = pd.DataFrame(schedule_data)
+        if not df_s.empty: activities_map.update(df_s.set_index('id_attivita')['descrizione'].to_dict())
+    except: pass
     return activities_map
 
 @st.cache_data(ttl=50)
 def load_squadra_map():
     try:
         squadre = shift_service.get_squadre()
-        dip_squadra_map = {}
-        for squadra in squadre:
-            membri_ids = shift_service.get_membri_squadra(squadra['id_squadra'])
-            for id_dip in membri_ids:
-                dip_squadra_map[id_dip] = squadra['nome_squadra']
-        return dip_squadra_map
-    except Exception as e:
-        # print(f"Errore caricamento mappa squadre: {e}")
-        return {}
+        d_map = {}
+        for sq in squadre:
+            mems = shift_service.get_membri_squadra(sq['id_squadra'])
+            for mid in mems: d_map[mid] = sq['nome_squadra']
+        return d_map
+    except: return {}
 
 def map_activity_id(id_att, activities_map):
-    if pd.isna(id_att) or id_att == "-1":
-        return "N/A (Non Specificato)"
-    return activities_map.get(id_att, f"Attività Sconosciuta ({id_att})")
+    if pd.isna(id_att) or id_att == "-1": return "N/A"
+    return activities_map.get(id_att, f"Attività {id_att}")
 
 @st.cache_data(ttl=60)
 def load_processed_data(start_date, end_date):
-    """Carica i dati includendo le nuove colonne Presenza e Lavoro."""
-    df_raw_report = shift_service.get_report_data_df(start_date, end_date)
+    df = shift_service.get_report_data_df(start_date, end_date)
+    if df.empty: return pd.DataFrame()
+    act_map = load_activities_map()
+    sq_map = load_squadra_map()
+    df['desc_attivita'] = df['id_attivita'].apply(map_activity_id, args=(act_map,))
+    df['squadra'] = df['id_dipendente'].map(sq_map).fillna("Non Assegnato")
+    df['giorno'] = df['data_ora_inizio'].dt.date
+    if 'ore_presenza' not in df.columns: df['ore_presenza'] = 0.0
+    if 'ore_lavoro' not in df.columns: df['ore_lavoro'] = 0.0
+    mask = df['ore_presenza'].isna()
+    if mask.any():
+        calc = df[mask].apply(lambda r: ShiftEngine.calculate_professional_hours(r['data_ora_inizio'], r['data_ora_fine']), axis=1, result_type='expand')
+        df.loc[mask, 'ore_presenza'] = calc[0]
+        df.loc[mask, 'ore_lavoro'] = calc[1]
+    return df
 
-    if df_raw_report.empty:
-        return pd.DataFrame()
-    
-    activities_map = load_activities_map()
-    squadra_map = load_squadra_map()
-
-    # Arricchimento dati
-    df_raw_report['desc_attivita'] = df_raw_report['id_attivita'].apply(map_activity_id, args=(activities_map,))
-    df_raw_report['squadra'] = df_raw_report['id_dipendente'].map(squadra_map).fillna("Non Assegnato")
-    df_raw_report['giorno'] = df_raw_report['data_ora_inizio'].dt.date
-    
-    # Fallback calcolo ore (se mancano nel DB)
-    if 'ore_presenza' not in df_raw_report.columns: df_raw_report['ore_presenza'] = 0.0
-    if 'ore_lavoro' not in df_raw_report.columns: df_raw_report['ore_lavoro'] = 0.0
-        
-    mask_nan = df_raw_report['ore_presenza'].isna()
-    if mask_nan.any():
-        temp_calc = df_raw_report[mask_nan].apply(
-            lambda row: ShiftEngine.calculate_professional_hours(row['data_ora_inizio'], row['data_ora_fine']), 
-            axis=1, result_type='expand'
-        )
-        df_raw_report.loc[mask_nan, 'ore_presenza'] = temp_calc[0]
-        df_raw_report.loc[mask_nan, 'ore_lavoro'] = temp_calc[1]
-
-    return df_raw_report
-
-def to_excel(df: pd.DataFrame) -> bytes:
+def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='ReportOre')
+        df.to_excel(writer, index=False, sheet_name='Report')
     return output.getvalue()
 
-# --- 2. PANNELLO FILTRI ---
+# --- FILTRI ---
 st.subheader("Pannello di Controllo")
-
-if 'report_loaded' not in st.session_state:
-    st.session_state.report_loaded = False
-
+if 'report_loaded' not in st.session_state: st.session_state.report_loaded = False
 with st.container(border=True):
-    col1, col2, col3 = st.columns([1, 1, 2])
+    c1, c2, c3 = st.columns([1, 1, 2])
     today = date.today()
-    default_start = st.session_state.get('report_date_from', today.replace(day=1))
-    default_end = st.session_state.get('report_date_to', today)
-    
-    with col1: date_from_input = st.date_input("Da data", default_start)
-    with col2: date_to_input = st.date_input("A data", default_end)
-    with col3:
+    d_start = st.session_state.get('rep_start', today.replace(day=1))
+    d_end = st.session_state.get('rep_end', today)
+    with c1: d_in = st.date_input("Dal", d_start)
+    with c2: d_out = st.date_input("Al", d_end)
+    with c3: 
         st.write("")
         st.write("")
-        run_report = st.button("Applica Filtri e Carica Report", type="primary", use_container_width=True)
-
-if run_report:
-    st.session_state.report_loaded = True
-    if (st.session_state.get('report_date_from') != date_from_input or st.session_state.get('report_date_to') != date_to_input):
-        st.cache_data.clear()
-    st.session_state.report_date_from = date_from_input
-    st.session_state.report_date_to = date_to_input
+        if st.button("Applica Filtri e Carica", type="primary", use_container_width=True):
+            st.session_state.rep_start = d_in
+            st.session_state.rep_end = d_out
+            st.session_state.report_loaded = True
+            st.rerun()
 
 if not st.session_state.report_loaded:
     st.info("Imposta un intervallo di date e clicca 'Applica Filtri'.")
     st.stop()
 
-date_from = st.session_state.report_date_from
-date_to = st.session_state.report_date_to
-
-if date_from > date_to: st.error("Date invalide."); st.stop()
-
 try:
-    with st.spinner("Elaborazione dati..."):
-        df_processed = load_processed_data(date_from, date_to)
-        if df_processed.empty:
-            st.warning("Nessun dato trovato."); st.stop()
-except Exception as e:
-    st.error(f"Errore: {e}"); st.stop()
+    with st.spinner("Elaborazione..."):
+        df_proc = load_processed_data(st.session_state.rep_start, st.session_state.rep_end)
+        if df_proc.empty: st.warning("Nessun dato."); st.stop()
+except Exception as e: st.error(f"Errore: {e}"); st.stop()
 
-st.header(f"Report dal {date_from.strftime('%d/%m/%Y')} al {date_to.strftime('%d/%m/%Y')}")
+st.header(f"Report dal {st.session_state.rep_start.strftime('%d/%m/%Y')} al {st.session_state.rep_end.strftime('%d/%m/%Y')}")
 
-# Filtri Avanzati
-with st.expander("Filtri Avanzati (Squadra / Dipendente)", expanded=False):
-    f_col1, f_col2, f_col3 = st.columns(3)
-    with f_col1: selected_dipendenti = st.multiselect("Dipendente", sorted(df_processed['dipendente_nome'].unique()))
-    with f_col2: selected_squadre = st.multiselect("Squadra", sorted(df_processed['squadra'].unique()))
-    with f_col3: selected_attivita = st.multiselect("Attività", sorted(df_processed['desc_attivita'].unique()))
+with st.expander("Filtri Avanzati", expanded=False):
+    f1, f2, f3 = st.columns(3)
+    with f1: s_dip = st.multiselect("Dipendente", sorted(df_proc['dipendente_nome'].unique()))
+    with f2: s_sq = st.multiselect("Squadra", sorted(df_proc['squadra'].unique()))
+    with f3: s_act = st.multiselect("Attività", sorted(df_proc['desc_attivita'].unique()))
 
-df_filtered = df_processed.copy()
-if selected_dipendenti: df_filtered = df_filtered[df_filtered['dipendente_nome'].isin(selected_dipendenti)]
-if selected_squadre: df_filtered = df_filtered[df_filtered['squadra'].isin(selected_squadre)]
-if selected_attivita: df_filtered = df_filtered[df_filtered['desc_attivita'].isin(selected_attivita)]
+df_filtered = df_proc.copy()
+if s_dip: df_filtered = df_filtered[df_filtered['dipendente_nome'].isin(s_dip)]
+if s_sq: df_filtered = df_filtered[df_filtered['squadra'].isin(s_sq)]
+if s_act: df_filtered = df_filtered[df_filtered['desc_attivita'].isin(s_act)]
 
-if df_filtered.empty: st.warning("Nessun dato con questi filtri."); st.stop()
+if df_filtered.empty: st.warning("Nessun dato con i filtri attuali."); st.stop()
 
-# --- 3. TABS ---
-tab1, tab2, tab3, tab_audit = st.tabs(["📊 Dashboard Operativa", "🔍 Analisi Pivot (Separate)", "📥 Export Excel", "⚖️ AUDIT INDUSTRIALE"])
+# --- TABS (UNIFICATI) ---
+tab1, tab2, tab3, tab_audit = st.tabs(["📊 Dashboard", "🔍 Pivot", "📥 Export", "⚖️ AUDIT & SIMULATORE"])
 
 # TAB 1: DASHBOARD
 with tab1:
     tot_p, tot_l = df_filtered['ore_presenza'].sum(), df_filtered['ore_lavoro'].sum()
     k1, k2, k3 = st.columns(3)
-    k1.metric("Ore Presenza (Busta)", f"{tot_p:,.1f}")
-    k2.metric("Ore Lavoro (Cantiere)", f"{tot_l:,.1f}")
-    k3.metric("Delta Ore", f"{tot_p-tot_l:,.1f}", delta="Non Produttive", delta_color="inverse")
+    k1.metric("Ore Presenza", f"{tot_p:,.1f}")
+    k2.metric("Ore Lavoro", f"{tot_l:,.1f}")
+    k3.metric("Delta", f"{tot_p-tot_l:,.1f}", delta="Non Produttive", delta_color="inverse")
     st.divider()
     c1, c2 = st.columns(2)
     c1.plotly_chart(px.pie(df_filtered.groupby('squadra')['ore_lavoro'].sum().reset_index(), names='squadra', values='ore_lavoro', title="Ore per Squadra"), use_container_width=True)
-    c2.plotly_chart(px.bar(df_filtered.groupby('giorno')[['ore_presenza', 'ore_lavoro']].sum().reset_index(), x='giorno', y=['ore_presenza', 'ore_lavoro'], title="Trend Giornaliero"), use_container_width=True)
+    c2.plotly_chart(px.bar(df_filtered.groupby('giorno')[['ore_presenza', 'ore_lavoro']].sum().reset_index(), x='giorno', y=['ore_presenza', 'ore_lavoro'], title="Trend"), use_container_width=True)
 
-# ==============================================================================
-# ★ TAB 2: PIVOT SEPARATE (FIX NO MATPLOTLIB) ★
-# ==============================================================================
+# TAB 2: PIVOT
 with tab2:
-    st.header("Analisi Pivot Separata")
-    st.markdown("Visualizzazione distinta per **Contabilità Interna** ed **Esterna**.")
-
-    # --- TABELLA 1: INTERNA (BUSTE PAGA) ---
-    st.subheader("1. STATINO INTERNO (Buste Paga)")
-    st.info("📅 Dati basati su **Ore Presenza Totali** (Retribuite al dipendente)")
-    
+    st.subheader("1. STATINO INTERNO")
     try:
-        pivot_presenza = pd.pivot_table(
-            df_filtered, 
-            index=['squadra', 'dipendente_nome'], 
-            columns='giorno', 
-            values='ore_presenza', 
-            aggfunc='sum', 
-            fill_value=0, 
-            margins=True, 
-            margins_name="TOTALE"
-        )
-        # USA STYLE.MAP INVECE DI BACKGROUND_GRADIENT
-        st.dataframe(pivot_presenza.style.format("{:.1f}").map(style_internal), use_container_width=True)
-    except Exception as e:
-        st.error(f"Errore creazione pivot presenza: {e}")
-
-    st.markdown("---") # Divisore Netto
-
-    # --- TABELLA 2: ESTERNA (CANTIERE) ---
-    st.subheader("2. REPORT CANTIERE (Fatturazione)")
-    st.warning("🚜 Dati basati su **Ore Lavoro Riconosciute** (Fatturabili al cantiere)")
-    
+        p1 = pd.pivot_table(df_filtered, index=['squadra', 'dipendente_nome'], columns='giorno', values='ore_presenza', aggfunc='sum', fill_value=0, margins=True)
+        st.dataframe(p1.style.format("{:.1f}").map(style_internal), use_container_width=True)
+    except: st.error("Errore pivot")
+    st.divider()
+    st.subheader("2. REPORT CANTIERE")
     try:
-        pivot_lavoro = pd.pivot_table(
-            df_filtered, 
-            index=['squadra', 'dipendente_nome'], 
-            columns='giorno', 
-            values='ore_lavoro', 
-            aggfunc='sum', 
-            fill_value=0, 
-            margins=True, 
-            margins_name="TOTALE"
-        )
-        # USA STYLE.MAP INVECE DI BACKGROUND_GRADIENT
-        st.dataframe(pivot_lavoro.style.format("{:.1f}").map(style_external), use_container_width=True)
-    except Exception as e:
-        st.error(f"Errore creazione pivot lavoro: {e}")
+        p2 = pd.pivot_table(df_filtered, index=['squadra', 'dipendente_nome'], columns='giorno', values='ore_lavoro', aggfunc='sum', fill_value=0, margins=True)
+        st.dataframe(p2.style.format("{:.1f}").map(style_external), use_container_width=True)
+    except: pass
 
 # TAB 3: EXPORT
 with tab3:
-    st.subheader("Esportazione Dati")
-    colonne_export = {'giorno': 'Data', 'squadra': 'Squadra', 'dipendente_nome': 'Nome', 'ruolo': 'Ruolo', 'desc_attivita': 'Attività', 'ore_presenza': 'Presenza', 'ore_lavoro': 'Lavoro', 'note': 'Note'}
-    
-    # Fix robusto per colonne mancanti
-    cols_to_use = [c for c in colonne_export.keys() if c in df_filtered.columns]
-    df_exp = df_filtered[cols_to_use].rename(columns=colonne_export)
-    
-    st.download_button("Scarica Excel Completo", to_excel(df_exp), f"Report_{date.today()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheet_ml.sheet", type="primary")
+    col_map = {'giorno': 'Data', 'squadra': 'Squadra', 'dipendente_nome': 'Nome', 'ruolo': 'Ruolo', 'desc_attivita': 'Attività', 'ore_presenza': 'Presenza', 'ore_lavoro': 'Lavoro'}
+    cols = [c for c in col_map.keys() if c in df_filtered.columns]
+    df_exp = df_filtered[cols].rename(columns=col_map)
+    st.download_button("Scarica Excel", to_excel(df_exp), f"Report_{date.today()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheet_ml.sheet", type="primary")
     st.dataframe(df_exp, hide_index=True)
 
 # ==============================================================================
-# ★ TAB 4: AUDIT INDUSTRIALE (MARSIGLIA MODEL) ★
+# ★ TAB 4: AUDIT UNIFICATO (THE GLASS BOX) ★
 # ==============================================================================
 with tab_audit:
-    st.markdown("## ⚖️ Audit Industriale: Analisi per Squadra Tipo")
-    st.markdown("Analisi del **Costo Vivo Giornaliero** (10h pagate) vs **Incasso Giornaliero** (9h riconosciute).")
+    st.markdown("## ⚖️ Control Room Finanziaria (Analisi Squadra Tipo)")
     
-    # --- A. CONFIGURAZIONE ---
-    with st.expander("🛠️ Parametri di Audit (Editabili)", expanded=True):
-        c_p1, c_p2, c_p3 = st.columns(3)
-        with c_p1:
-            st.markdown("##### 1. Ricavi")
-            tariffa_attuale = st.number_input("Tariffa Oraria (€)", value=27.00, format="%.2f")
-            ore_fattura_gg = st.number_input("Ore Riconosciute dal Cantiere", value=9)
-        with c_p2:
-            st.markdown("##### 2. Costi Manodopera")
-            netto_op = st.number_input("Netto Ora Operaio (€)", value=18.00, format="%.2f")
-            oneri_op = st.number_input("Oneri Giornalieri Op.", value=42.00, format="%.2f")
-            netto_capo = st.number_input("Netto Ora Capo (€)", value=21.00, format="%.2f")
-            oneri_capo = st.number_input("Oneri Giornalieri Capo", value=48.00, format="%.2f")
-            n_op = st.number_input("Numero Operai", value=6)
-        with c_p3:
-            st.markdown("##### 3. Costi Struttura")
-            ore_presenza_gg = st.number_input("Ore Pagate all'Uomo", value=10)
-            ticket = st.number_input("Ticket/Giorno (€)", value=20.00, format="%.2f")
-            overheads = st.number_input("Spese Generali (€/ora fatt.)", value=2.28, format="%.2f")
-
-    st.divider()
-
-    # --- B. MOTORE MATEMATICO ---
-    # 1. Costi Uscita
-    costo_giorno_singolo_op = (netto_op * ore_presenza_gg) + oneri_op + ticket
-    costo_giorno_singolo_capo = (netto_capo * ore_presenza_gg) + oneri_capo + ticket
-    costo_giorno_squadra = (costo_giorno_singolo_op * n_op) + costo_giorno_singolo_capo
-    
-    # 2. Ricavi Entrata
-    ore_fatturabili_squadra = (n_op + 1) * ore_fattura_gg
-    incasso_giorno_squadra = ore_fatturabili_squadra * tariffa_attuale
-    
-    # 3. Risultati
-    margine_industriale_giorno = incasso_giorno_squadra - costo_giorno_squadra
-    costo_overheads_giorno = overheads * ore_fatturabili_squadra
-    margine_netto_giorno = margine_industriale_giorno - costo_overheads_giorno
-    
-    # Break Even
-    costo_totale_full_giorno = costo_giorno_squadra + costo_overheads_giorno
-    bep_tariffa = costo_totale_full_giorno / ore_fatturabili_squadra
-
-    # --- C. VISUALIZZAZIONE ---
-    col_res_1, col_res_2 = st.columns([1, 2])
-    with col_res_1:
-        st.subheader("Bilancio Squadra (1 Giorno)")
-        st.markdown(f"**Uscite (Costo Vivo):** :red[€ {costo_giorno_squadra:,.2f}]")
-        st.markdown(f"**Entrate (Fatturato):** :blue[€ {incasso_giorno_squadra:,.2f}]")
-        if margine_industriale_giorno < 0: st.error(f"⚠️ PERDITA OPERATIVA: € {margine_industriale_giorno:,.2f} /giorno")
-        else: st.warning(f"Margine Lordo: € {margine_industriale_giorno:,.2f} /giorno")
-        st.markdown("---")
-        final_color = "red" if margine_netto_giorno < 0 else "green"
-        st.markdown(f"### Risultato Netto: :{final_color}[€ {margine_netto_giorno:,.2f}] /giorno")
-
-    with col_res_2:
-        st.subheader("Analisi Tariffa Oraria")
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Tariffa Attuale", f"€ {tariffa_attuale:.2f}")
-        k2.metric("Costo Reale (BEP)", f"€ {bep_tariffa:.2f}")
-        k3.metric("Differenza", f"€ {tariffa_attuale - bep_tariffa:.2f}", delta_color="normal" if tariffa_attuale > bep_tariffa else "inverse")
+    # --- LAYOUT A COLONNE PER INPUT ---
+    with st.expander("🛠️ CONFIGURAZIONE PARAMETRI DI COMMESSA", expanded=True):
+        ic1, ic2, ic3, ic4 = st.columns(4)
         
-        st.markdown("#### 🧮 La Prova del 9 (Dettaglio Uomo)")
-        df_prova = pd.DataFrame([
-            {"Voce": "Paga Netta (10h)", "Importo": netto_op * 10},
-            {"Voce": "+ Oneri (INPS/INAIL)", "Importo": oneri_op},
-            {"Voce": "+ Ticket", "Importo": ticket},
-            {"Voce": "= COSTO VIVO UOMO", "Importo": costo_giorno_singolo_op},
-            {"Voce": "Fatturato (9h x 27€)", "Importo": 9 * tariffa_attuale},
-            {"Voce": "MARGINE (Pre-spese)", "Importo": (9 * tariffa_attuale) - costo_giorno_singolo_op}
-        ])
-        st.dataframe(df_prova.style.format({"Importo": "€ {:.2f}"}), hide_index=True, use_container_width=True)
+        with ic1:
+            st.markdown("**1. STRUTTURA SQUADRA**")
+            n_op = st.number_input("N. Operai", 1, 50, 6)
+            n_cap = st.number_input("N. Capisquadra", 0, 10, 1)
+            tot_pax = n_op + n_cap
+            st.info(f"Squadra: **{tot_pax}** Persone")
 
+        with ic2:
+            st.markdown("**2. COSTI UNITARI (Busta+Oneri)**")
+            net_op = st.number_input("Netto Operaio (€/h)", 0.0, 50.0, 13.00, format="%.2f")
+            one_op = st.number_input("Oneri Operaio (€/gg)", 0.0, 100.0, 42.00, format="%.2f")
+            net_cap = st.number_input("Netto Capo (€/h)", 0.0, 60.0, 16.00, format="%.2f")
+            one_cap = st.number_input("Oneri Capo (€/gg)", 0.0, 150.0, 48.00, format="%.2f")
+
+        with ic3:
+            st.markdown("**3. EFFICIENZA & SPESE**")
+            h_pay = st.number_input("Ore Pagate (Input)", 0.0, 15.0, 10.0, step=0.5)
+            h_bill = st.number_input("Ore Fatturate (Output)", 0.0, 15.0, 9.0, step=0.5)
+            ticket = st.number_input("Ticket/Viaggio (€/gg)", 0.0, 100.0, 20.00, format="%.2f")
+            ovh = st.number_input("Spese Gen. (€/h fatt.)", 0.0, 20.0, 2.28, format="%.2f")
+
+        with ic4:
+            st.markdown("**4. RICAVI & VOLUMI**")
+            tariffa = st.number_input("Tariffa Cliente (€/h)", 0.0, 100.0, 27.00, format="%.2f")
+            gg_mese = st.number_input("Giorni Mese", 1, 31, 22)
+            n_squadre = st.number_input("Moltiplicatore Squadre", 1, 20, 1, help="Proietta su più squadre")
+
+    # --- IL MOTORE DI CALCOLO (TRASPARENTE) ---
+    # Costi Unitari Giorno
+    c_op_gg = (net_op * h_pay) + one_op + ticket
+    c_cap_gg = (net_cap * h_pay) + one_cap + ticket
+    
+    # Costi Squadra Giorno
+    c_tot_sq_gg = (c_op_gg * n_op) + (c_cap_gg * n_cap)
+    
+    # Ricavi Squadra Giorno
+    h_bill_sq = h_bill * tot_pax
+    r_tot_sq_gg = h_bill_sq * tariffa
+    
+    # Margini
+    marg_ind_gg = r_tot_sq_gg - c_tot_sq_gg
+    c_ovh_sq_gg = ovh * h_bill_sq
+    marg_net_gg = marg_ind_gg - c_ovh_sq_gg
+    
+    # BEP (Break Even Point Tariffa)
+    costo_pieno_sq = c_tot_sq_gg + c_ovh_sq_gg
+    tariffa_bep = costo_pieno_sq / h_bill_sq if h_bill_sq > 0 else 0
+
+    # Proiezioni
+    proj_mese = marg_net_gg * gg_mese * n_squadre
+    tot_pax_campo = tot_pax * n_squadre
+
+    # --- OUTPUT VISIVO (LO SCONTRINO) ---
     st.divider()
-    
-    # --- D. GENERATORE LETTERA ---
-    st.subheader("📄 Generazione Audit per Direzione")
-    
-    audit_text = f"""
-    MARSIGLIA, {date.today().strftime("%d/%m/%Y")}
+    c_left, c_right = st.columns([1.3, 1])
 
-    OGGETTO: AUDIT INDUSTRIALE E REVISIONE COSTI DI COMMESSA
-    RIF: Cantiere Navale Marsiglia (CNdM) – Analisi Costi Squadra {n_op+1} Unità
+    with c_left:
+        st.subheader("🧾 Scontrino Analitico (Squadra Giorno)")
+        
+        # HTML TABLE per massima chiarezza
+        html_tab = f"""
+        <table style="width:100%; border-collapse: collapse; font-size:14px;">
+            <tr style="border-bottom: 2px solid #ccc; background-color: #f9f9f9;">
+                <th style="text-align:left; padding:8px;">VOCE</th>
+                <th style="text-align:right; padding:8px;">FORMULA</th>
+                <th style="text-align:right; padding:8px;">TOTALE</th>
+            </tr>
+            <tr>
+                <td style="padding:8px; color:#006600;"><b>(+) FATTURATO SQUADRA</b></td>
+                <td style="text-align:right; color:#666;">{tot_pax} Uomini x {h_bill}h x € {tariffa:.2f}</td>
+                <td style="text-align:right; font-weight:bold; color:#006600;">€ {r_tot_sq_gg:,.2f}</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;">(-) Costo Operai ({n_op})</td>
+                <td style="text-align:right; color:#666;">{n_op} x [(€{net_op}x{h_pay}h)+€{one_op}+€{ticket}]</td>
+                <td style="text-align:right; color:#b91c1c;">€ {c_op_gg*n_op:,.2f}</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;">(-) Costo Capi ({n_cap})</td>
+                <td style="text-align:right; color:#666;">{n_cap} x [(€{net_cap}x{h_pay}h)+€{one_cap}+€{ticket}]</td>
+                <td style="text-align:right; color:#b91c1c;">€ {c_cap_gg*n_cap:,.2f}</td>
+            </tr>
+            <tr style="background-color: #eee; font-weight:bold;">
+                <td style="padding:8px;">= MARGINE INDUSTRIALE</td>
+                <td style="text-align:right;">Ricavi - Costi Vivi</td>
+                <td style="text-align:right;">€ {marg_ind_gg:,.2f}</td>
+            </tr>
+            <tr>
+                <td style="padding:8px;">(-) Spese Generali</td>
+                <td style="text-align:right; color:#666;">€ {ovh:.2f} x {h_bill_sq} ore fatt.</td>
+                <td style="text-align:right; color:#b91c1c;">€ {c_ovh_sq_gg:,.2f}</td>
+            </tr>
+            <tr style="border-top: 2px solid #000; background-color: {'#d1e7dd' if marg_net_gg >= 0 else '#f8d7da'};">
+                <td style="padding:10px; font-size:16px;"><b>= RISULTATO NETTO (Giorno)</b></td>
+                <td></td>
+                <td style="text-align:right; font-size:16px; font-weight:bold; color:{'#0f5132' if marg_net_gg >= 0 else '#842029'};">€ {marg_net_gg:,.2f}</td>
+            </tr>
+        </table>
+        """
+        st.markdown(html_tab, unsafe_allow_html=True)
+        
+        st.write("")
+        st.markdown("#### 🚀 Proiezione Finanziaria")
+        kp1, kp2 = st.columns(2)
+        kp1.metric("Tariffa di Pareggio (BEP)", f"€ {tariffa_bep:.2f}", delta=f"{tariffa-tariffa_bep:.2f} vs Attuale", delta_color="normal" if tariffa>=tariffa_bep else "inverse")
+        kp2.metric(f"Risultato Mese ({tot_pax_campo} Pax)", f"€ {proj_mese:,.2f}", delta="UTILE" if proj_mese>=0 else "PERDITA", delta_color="normal" if proj_mese>=0 else "inverse")
 
-    1. EXECUTIVE SUMMARY
-    La presente relazione certifica che l'attuale tariffa di € {tariffa_attuale:.2f}/h è INFERIORE al 
-    Costo Industriale di Produzione (€ {bep_tariffa:.2f}/h), generando una perdita strutturale 
-    giornaliera di € {abs(margine_netto_giorno):.2f} per ogni squadra in campo.
-
-    2. ANALISI CASH FLOW GIORNALIERO (SQUADRA {n_op+1} PERSONE)
-    
-    A. COSTI VIVI (USCITE CERTE SU 10 ORE PRESENZA)
-       - Personale Operativo ({n_op} unità): € {costo_giorno_singolo_op:.2f} cad. x {n_op} = € {costo_giorno_singolo_op*n_op:,.2f}
-       - Capocantiere (1 unità): € {costo_giorno_singolo_capo:,.2f}
-       ----------------------------------------------------------
-       TOTALE COSTO MANODOPERA GIORNALIERO: € {costo_giorno_squadra:,.2f}
-
-    B. RICAVI (ENTRATE SU 9 ORE RICONOSCIUTE)
-       - Ore Totali Fatturabili: {(n_op+1)*ore_fattura_gg} ore
-       - Tariffa Applicata: € {tariffa_attuale:.2f}/h
-       ----------------------------------------------------------
-       TOTALE FATTURATO GIORNALIERO: € {incasso_giorno_squadra:,.2f}
-
-    3. RISULTATO OPERATIVO
-       Fatturato (€ {incasso_giorno_squadra:,.2f}) - Costo Manodopera (€ {costo_giorno_squadra:,.2f})
-       = MARGINE INDUSTRIALE LORDO: € {margine_industriale_giorno:,.2f} /giorno
-       
-       Meno Spese Generali (Overheads € {overheads:.2f}/h): - € {costo_overheads_giorno:,.2f}
-       ==========================================================
-       RISULTATO NETTO FINALE: € {margine_netto_giorno:,.2f} /giorno
-       ==========================================================
-
-    4. RICHIESTA ADEGUAMENTO
-    Il Costo di Break-Even (Pareggio) è certificato a € {bep_tariffa:.2f} /h.
-    Si richiede l'adeguamento della tariffa a € {int(bep_tariffa)+1}.00 /h per garantire 
-    la continuità operativa senza perdite.
-
-    In Fede,
-    L'Amministratore Unico
-    """
-    
-    st.text_area("Copia il testo qui sotto:", value=audit_text, height=450)
+    with c_right:
+        st.subheader("📉 Cascata dei Margini")
+        # Waterfall Chart
+        fig = go.Figure(go.Waterfall(
+            orientation = "v",
+            measure = ["relative", "relative", "total", "relative", "total"],
+            x = ["Fatturato", "Costo Manodopera", "Margine Ind.", "Spese Gen.", "Utile Netto"],
+            y = [r_tot_sq_gg, -c_tot_sq_gg, 0, -c_ovh_sq_gg, 0],
+            text = [f"€{r_tot_sq_gg:.0f}", f"-€{c_tot_sq_gg:.0f}", f"€{marg_ind_gg:.0f}", f"-€{c_ovh_sq_gg:.0f}", f"€{marg_net_gg:.0f}"],
+            connector = {"line":{"color":"rgb(63, 63, 63)"}},
+            decreasing = {"marker":{"color":"#EF553B"}},
+            increasing = {"marker":{"color":"#00CC96"}},
+            totals = {"marker":{"color":"#1F77B4"}}
+        ))
+        fig.update_layout(title="Formazione Utile Squadra (1 Giorno)", showlegend=False, height=450)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        if proj_mese < 0:
+            st.error(f"🛑 **STOP:** Con {tot_pax_campo} uomini perdi **€ {abs(proj_mese):,.0f} al mese**.")
+        else:
+            st.success(f"✅ **GO:** Con {tot_pax_campo} uomini generi **€ {proj_mese:,.0f} al mese**.")
